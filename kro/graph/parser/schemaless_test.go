@@ -17,7 +17,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/kro-run/kro/pkg/graph/variable"
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 func areEqualExpressionFields(a, b []variable.FieldDescriptor) bool {

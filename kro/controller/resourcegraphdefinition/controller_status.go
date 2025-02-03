@@ -24,7 +24,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/kro-run/kro/api/v1alpha1"
-	"github.com/kro-run/kro/pkg/metadata"
+	"github.com/upbound/function-kro/kro/metadata"
 )
 
 // StatusProcessor handles the processing of ResourceGraphDefinition status updates

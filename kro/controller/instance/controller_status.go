@@ -22,7 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kro-run/kro/api/v1alpha1"
-	"github.com/kro-run/kro/pkg/requeue"
+	"github.com/upbound/function-kro/kro/requeue"
 )
 
 func createCondition(conditionType v1alpha1.ConditionType, status corev1.ConditionStatus, reason, message string, generation int64) map[string]interface{} {

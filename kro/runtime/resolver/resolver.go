@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kro-run/kro/pkg/graph/fieldpath"
-	"github.com/kro-run/kro/pkg/graph/variable"
+	"github.com/upbound/function-kro/kro/graph/fieldpath"
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 // ResolutionResult represents the result of resolving a single expression.

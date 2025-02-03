@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/kro-run/kro/api/v1alpha1"
-	"github.com/kro-run/kro/pkg/metadata"
+	"github.com/upbound/function-kro/kro/metadata"
 )
 
 // cleanupResourceGraphDefinition handles the deletion of a ResourceGraphDefinition by shutting down its associated

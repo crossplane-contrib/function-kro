@@ -23,10 +23,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/kro-run/kro/api/v1alpha1"
-	instancectrl "github.com/kro-run/kro/pkg/controller/instance"
-	"github.com/kro-run/kro/pkg/dynamiccontroller"
-	"github.com/kro-run/kro/pkg/graph"
-	"github.com/kro-run/kro/pkg/metadata"
+	instancectrl "github.com/upbound/function-kro/kro/controller/instance"
+	"github.com/upbound/function-kro/kro/dynamiccontroller"
+	"github.com/upbound/function-kro/kro/graph"
+	"github.com/upbound/function-kro/kro/metadata"
 )
 
 // reconcileResourceGraphDefinition orchestrates the reconciliation of a ResourceGraphDefinition by:

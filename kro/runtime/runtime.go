@@ -22,9 +22,9 @@ import (
 	"golang.org/x/exp/maps"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	krocel "github.com/kro-run/kro/pkg/cel"
-	"github.com/kro-run/kro/pkg/graph/variable"
-	"github.com/kro-run/kro/pkg/runtime/resolver"
+	krocel "github.com/upbound/function-kro/kro/cel"
+	"github.com/upbound/function-kro/kro/graph/variable"
+	"github.com/upbound/function-kro/kro/runtime/resolver"
 )
 
 // Compile time proof to ensure that ResourceGraphDefinitionRuntime implements the

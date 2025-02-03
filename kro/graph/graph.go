@@ -16,8 +16,8 @@ package graph
 import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/kro-run/kro/pkg/graph/dag"
-	"github.com/kro-run/kro/pkg/runtime"
+	"github.com/upbound/function-kro/kro/graph/dag"
+	"github.com/upbound/function-kro/kro/runtime"
 )
 
 // Graph represents a processed resourcegraphdefinition. It contains the DAG representation

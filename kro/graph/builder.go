@@ -29,16 +29,16 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/kro-run/kro/api/v1alpha1"
-	krocel "github.com/kro-run/kro/pkg/cel"
-	"github.com/kro-run/kro/pkg/cel/ast"
-	"github.com/kro-run/kro/pkg/graph/crd"
-	"github.com/kro-run/kro/pkg/graph/dag"
-	"github.com/kro-run/kro/pkg/graph/emulator"
-	"github.com/kro-run/kro/pkg/graph/parser"
-	"github.com/kro-run/kro/pkg/graph/schema"
-	"github.com/kro-run/kro/pkg/graph/variable"
-	"github.com/kro-run/kro/pkg/metadata"
-	"github.com/kro-run/kro/pkg/simpleschema"
+	krocel "github.com/upbound/function-kro/kro/cel"
+	"github.com/upbound/function-kro/kro/cel/ast"
+	"github.com/upbound/function-kro/kro/graph/crd"
+	"github.com/upbound/function-kro/kro/graph/dag"
+	"github.com/upbound/function-kro/kro/graph/emulator"
+	"github.com/upbound/function-kro/kro/graph/parser"
+	"github.com/upbound/function-kro/kro/graph/schema"
+	"github.com/upbound/function-kro/kro/graph/variable"
+	"github.com/upbound/function-kro/kro/metadata"
+	"github.com/upbound/function-kro/kro/simpleschema"
 )
 
 // NewBuilder creates a new GraphBuilder instance.
