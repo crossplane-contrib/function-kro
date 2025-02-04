@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/upbound/function-kro/input/v1beta1"
+	"github.com/upbound/function-kro/kro/graph"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
@@ -31,22 +33,39 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// TODO(negz): This takes a RESTClient to make a discovery client. It uses
-	// the discovery client to load the OAPI schema for all resource kinds that
-	// appear in the template. It also generates a dummy schema.
-	//
-	// Process:
-	// 1. Create map of all namespaced GroupKinds in the cluster
-	// 2. Create map of resource (template) by id
-	//    a. Use schema resolver to get a CEL schema - https://pkg.go.dev/k8s.io/apiserver/pkg/cel/openapi/resolver#DefinitionsSchemaResolver.ResolveSchema
-	// gb, err := graph.NewBuilder(nil)
-	// if err != nil {
-	// 	//
-	// }
-	// g, err := gb.NewResourceGraphDefinition(nil) // TODO(negz): Takes RGD as input.
-	// if err != nil {
-	// 	//
-	// }
+	// TODO(negz): This won't work yet. It needs a schema resolver that can get
+	// CEL schemas for composed resources. See schema/resolver.go.
+	gb, err := graph.NewBuilder()
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph builder"))
+		return rsp, nil
+	}
+
+	// TODO(negz): Use extra resources to get the XR CRD and pass it in.
+	// TODO(negz): Does the CRD need anything special from crd.SynthesizeCRD?
+	xrCRD := &extv1.CustomResourceDefinition{}
+	g, err := gb.NewResourceGraphDefinition(rg, xrCRD)
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph"))
+		return rsp, nil
+	}
+
+	oxr, err := request.GetDesiredCompositeResource(req)
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot get observed composite resource"))
+		return rsp, nil
+	}
+
+	// TODO(negz): Does NewGraphRuntime make assumptions about the shape of the
+	// resource - e.g. its schema is from crd.SynthesizeCRD?
+	rt, err := g.NewGraphRuntime(&oxr.Resource.Unstructured)
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot get graph runtime"))
+		return rsp, nil
+	}
+
+	// TODO(negz): Pickup from here: https://github.com/kro-run/kro/blob/87a9b1c460854170e9bceac001ff870933d6a084/pkg/controller/instance/controller_reconcile.go#L63
+	_ = rt.GetInstance()
 
 	return rsp, nil
 }

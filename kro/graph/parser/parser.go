@@ -18,9 +18,8 @@ import (
 	"slices"
 	"strings"
 
-	"k8s.io/kube-openapi/pkg/validation/spec"
-
 	"github.com/upbound/function-kro/kro/graph/variable"
+	"k8s.io/kube-openapi/pkg/validation/spec"
 )
 
 const (

@@ -19,33 +19,27 @@ import (
 
 	cel "github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types/ref"
-	"golang.org/x/exp/maps"
-	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/yaml"
-	"k8s.io/apiserver/pkg/cel/openapi/resolver"
-	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/rest"
-
-	"github.com/kro-run/kro/api/v1alpha1"
+	"github.com/upbound/function-kro/input/v1beta1"
 	krocel "github.com/upbound/function-kro/kro/cel"
 	"github.com/upbound/function-kro/kro/cel/ast"
-	"github.com/upbound/function-kro/kro/graph/crd"
 	"github.com/upbound/function-kro/kro/graph/dag"
 	"github.com/upbound/function-kro/kro/graph/emulator"
 	"github.com/upbound/function-kro/kro/graph/parser"
 	"github.com/upbound/function-kro/kro/graph/schema"
 	"github.com/upbound/function-kro/kro/graph/variable"
 	"github.com/upbound/function-kro/kro/metadata"
-	"github.com/upbound/function-kro/kro/simpleschema"
+	"golang.org/x/exp/maps"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 )
 
 // NewBuilder creates a new GraphBuilder instance.
-func NewBuilder(
-	clientConfig *rest.Config,
-) (*Builder, error) {
-	schemaResolver, dc, err := schema.NewCombinedResolver(clientConfig)
+func NewBuilder() (*Builder, error) {
+	schemaResolver, err := schema.NewCombinedResolver()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create schema resolver: %w", err)
 	}
@@ -55,7 +49,6 @@ func NewBuilder(
 	rgBuilder := &Builder{
 		resourceEmulator: resourceEmulator,
 		schemaResolver:   schemaResolver,
-		discoveryClient:  dc,
 	}
 	return rgBuilder, nil
 }
@@ -93,17 +86,16 @@ type Builder struct {
 	// Maybe there is a better way, if anything probably there is a better way to
 	// validate the CEL expressions. To revisit.
 	resourceEmulator *emulator.Emulator
-	discoveryClient  discovery.DiscoveryInterface
 }
 
 // NewResourceGraphDefinition creates a new ResourceGraphDefinition object from the given ResourceGraphDefinition
 // CRD. The ResourceGraphDefinition object is a fully processed and validated representation
 // of the resource graph definition CRD, it's underlying resources, and the relationships between
 // the resources.
-func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphDefinition) (*Graph, error) {
+func (b *Builder) NewResourceGraphDefinition(rg *v1beta1.ResourceGraph, crd *extv1.CustomResourceDefinition) (*Graph, error) {
 	// Before anything else, let's copy the resource graph definition to avoid modifying the
 	// original object.
-	rgd := originalCR.DeepCopy()
+	rgd := rg.DeepCopy()
 
 	// There are a few steps to build a resource graph definition:
 	// 1. Validate the naming convention of the resource graph definition and its resources.
@@ -112,7 +104,7 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
 	//    that the names of the resources are valid to be used in CEL expressions.
 	//    for example name-something-something is not a valid name for a resource,
 	//    because in CEL - is a subtraction operator.
-	err := validateResourceGraphDefinitionNamingConventions(rgd)
+	err := validateResourceIDs(rgd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate resourcegraphdefinition: %w", err)
 	}
@@ -128,24 +120,12 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
 	//    CEL expressions.
 	// 4. Extract the CEL expressions from the resource + validate them.
 
-	namespacedResources := map[k8sschema.GroupKind]bool{}
-	apiResourceList, err := b.discoveryClient.ServerPreferredNamespacedResources()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve Kubernetes namespaced resources: %w", err)
-	}
-	for _, resourceList := range apiResourceList {
-		for _, r := range resourceList.APIResources {
-			gvk := k8sschema.FromAPIVersionAndKind(resourceList.GroupVersion, r.Kind)
-			namespacedResources[gvk.GroupKind()] = r.Namespaced
-		}
-	}
-
 	// we'll also store the resources in a map for easy access later.
 	resources := make(map[string]*Resource)
-	for i, rgResource := range rgd.Spec.Resources {
+	for i, rgResource := range rgd.Resources {
 		id := rgResource.ID
 		order := i
-		r, err := b.buildRGResource(rgResource, namespacedResources, order)
+		r, err := b.buildRGResource(rgResource, order)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build resource %q: %w", id, err)
 		}
@@ -170,39 +150,10 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
 	// the resources defined in the resource graph definition. Hence, we need to build the resources
 	// first, to be able to generate a proper schema for the instance status.
 
-	//
-
 	// Next, we need to understand the instance definition. The instance is
 	// the resource users will create in their cluster, to request the creation of
 	// the resources defined in the resource graph definition.
-	//
-	// The instance resource is a Kubernetes resource, differently from typical
-	// CRDs, users define the schema of the instance resource using the "SimpleSchema"
-	// format. This format is a simplified version of the OpenAPI schema, that only
-	// supports a subset of the features.
-	//
-	// SimpleSchema is a new standard we created to simplify CRD declarations, it is
-	// very useful when we need to define the Spec of a CRD, when it comes to defining
-	// the status of a CRD, we use CEL expressions. `kro` inspects the CEL expressions
-	// to infer the types of the status fields, and generate the OpenAPI schema for the
-	// status field. The CEL expressions are also used to patch the status field of the
-	// instance.
-	//
-	// We need to:
-	// 1. Parse the instance spec fields adhering to the SimpleSchema format.
-	// 2. Extract CEL expressions from the status
-	// 3. Validate them against the resources defined in the resource graph definition.
-	// 4. Infer the status schema based on the CEL expressions.
-
-	instance, err := b.buildInstanceResource(
-		rgd.Spec.Schema.Group,
-		rgd.Spec.Schema.APIVersion,
-		rgd.Spec.Schema.Kind,
-		rgd.Spec.Schema,
-		// We need to pass the resources to the instance resource, so we can validate
-		// the CEL expressions in the context of the resources.
-		resources,
-	)
+	instance, err := b.buildInstanceResource(crd, rgd.Status, resources)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build resourcegraphdefinition '%v': %w", rgd.Name, err)
 	}
@@ -251,7 +202,7 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
 // It provides a high-level understanding of the resource, by extracting the
 // OpenAPI schema, emualting the resource and extracting the cel expressions
 // from the schema.
-func (b *Builder) buildRGResource(rgResource *v1alpha1.Resource, namespacedResources map[k8sschema.GroupKind]bool, order int) (*Resource, error) {
+func (b *Builder) buildRGResource(rgResource *v1beta1.Resource, order int) (*Resource, error) {
 	// 1. We need to unmashal the resource into a map[string]interface{} to
 	//    make it easier to work with.
 	resourceObject := map[string]interface{}{}
@@ -326,8 +277,6 @@ func (b *Builder) buildRGResource(rgResource *v1alpha1.Resource, namespacedResou
 		return nil, fmt.Errorf("failed to parse includeWhen expressions: %v", err)
 	}
 
-	_, isNamespaced := namespacedResources[gvk.GroupKind()]
-
 	// Note that at this point we don't inject the dependencies into the resource.
 	return &Resource{
 		id:                     rgResource.ID,
@@ -338,7 +287,7 @@ func (b *Builder) buildRGResource(rgResource *v1alpha1.Resource, namespacedResou
 		variables:              resourceVariables,
 		readyWhenExpressions:   readyWhen,
 		includeWhenExpressions: includeWhen,
-		namespaced:             isNamespaced,
+		namespaced:             false, // TODO(negz): Crossplane v2 will need to handle this.
 		order:                  order,
 	}, nil
 }
@@ -419,11 +368,7 @@ func (b *Builder) buildDependencyGraph(
 //
 // Since instances are defined using the "SimpleSchema" format, we use a different
 // approach to build the instance resource. We need to:
-func (b *Builder) buildInstanceResource(
-	group, apiVersion, kind string,
-	rgDefinition *v1alpha1.Schema,
-	resources map[string]*Resource,
-) (*Resource, error) {
+func (b *Builder) buildInstanceResource(crd *extv1.CustomResourceDefinition, rgStatus runtime.RawExtension, resources map[string]*Resource) (*Resource, error) {
 	// The instance resource is the resource users will create in their cluster,
 	// to request the creation of the resources defined in the resource graph definition.
 	//
@@ -432,34 +377,19 @@ func (b *Builder) buildInstanceResource(
 	// using the "SimpleSchema" format, a new standard we created to simplify
 	// CRD declarations.
 
-	// The instance resource is a Kubernetes resource, so it has a GroupVersionKind.
-	gvk := metadata.GetResourceGraphDefinitionInstanceGVK(group, apiVersion, kind)
-
-	// We need to unmarshal the instance schema to a map[string]interface{} to
-	// make it easier to work with.
-	unstructuredInstance := map[string]interface{}{}
-	err := yaml.UnmarshalStrict(rgDefinition.Spec.Raw, &unstructuredInstance)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal instance schema: %w", err)
+	gvk := k8sschema.GroupVersionKind{
+		Group:   crd.Spec.Group,
+		Kind:    crd.Spec.Names.Kind,
+		Version: crd.Spec.Versions[0].Name, // TODO(negz): Validate this version exists ;)
 	}
 
-	// The instance resource has a schema defined using the "SimpleSchema" format.
-	instanceSpecSchema, err := buildInstanceSpecSchema(rgDefinition)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build OpenAPI schema for instance: %w", err)
-	}
-
-	instanceStatusSchema, statusVariables, err := buildStatusSchema(rgDefinition, resources)
+	statusVariables, err := buildStatusSchema(rgStatus, resources)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build OpenAPI schema for instance status: %w", err)
 	}
 
-	// Synthesize the CRD for the instance resource.
-	overrideStatusFields := true
-	instanceCRD := crd.SynthesizeCRD(group, apiVersion, kind, *instanceSpecSchema, *instanceStatusSchema, overrideStatusFields)
-
 	// Emulate the CRD
-	instanceSchemaExt := instanceCRD.Spec.Versions[0].Schema.OpenAPIV3Schema
+	instanceSchemaExt := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
 	instanceSchema, err := schema.ConvertJSONSchemaPropsToSpecSchema(instanceSchemaExt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert JSON schema to spec schema: %w", err)
@@ -480,7 +410,7 @@ func (b *Builder) buildInstanceResource(
 		id:             "instance",
 		gvr:            metadata.GVKtoGVR(gvk),
 		schema:         instanceSchema,
-		crd:            instanceCRD,
+		crd:            crd,
 		emulatedObject: emulatedInstance,
 	}
 
@@ -510,88 +440,30 @@ func (b *Builder) buildInstanceResource(
 	return instance, nil
 }
 
-// buildInstanceSpecSchema builds the instance spec schema that will be
-// used to generate the CRD for the instance resource. The instance spec
-// schema is expected to be defined using the "SimpleSchema" format.
-func buildInstanceSpecSchema(rgSchema *v1alpha1.Schema) (*extv1.JSONSchemaProps, error) {
-	// We need to unmarshal the instance schema to a map[string]interface{} to
-	// make it easier to work with.
-	instanceSpec := map[string]interface{}{}
-	err := yaml.UnmarshalStrict(rgSchema.Spec.Raw, &instanceSpec)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal spec schema: %w", err)
-	}
-
-	// The instance resource has a schema defined using the "SimpleSchema" format.
-	instanceSchema, err := simpleschema.ToOpenAPISpec(instanceSpec)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build OpenAPI schema for instance: %v", err)
-	}
-	return instanceSchema, nil
-}
-
 // buildStatusSchema builds the status schema for the instance resource. The
 // status schema is inferred from the CEL expressions in the status field.
 func buildStatusSchema(
-	rgSchema *v1alpha1.Schema,
+	rgStatus runtime.RawExtension,
 	resources map[string]*Resource,
 ) (
-	*extv1.JSONSchemaProps,
 	[]variable.FieldDescriptor,
 	error,
 ) {
 	// The instance resource has a schema defined using the "SimpleSchema" format.
 	unstructuredStatus := map[string]interface{}{}
-	err := yaml.UnmarshalStrict(rgSchema.Status.Raw, &unstructuredStatus)
+	err := yaml.UnmarshalStrict(rgStatus.Raw, &unstructuredStatus)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal status schema: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal status schema: %w", err)
 	}
 
 	// different from the instance spec, the status schema is inferred from the
 	// CEL expressions in the status field.
 	fieldDescriptors, err := parser.ParseSchemalessResource(unstructuredStatus)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to extract CEL expressions from status: %w", err)
+		return nil, fmt.Errorf("failed to extract CEL expressions from status: %w", err)
 	}
 
-	// Inspection of the CEL expressions to infer the types of the status fields.
-	resourceNames := maps.Keys(resources)
-
-	env, err := krocel.DefaultEnvironment(krocel.WithResourceIDs(resourceNames))
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create CEL environment: %w", err)
-	}
-
-	// statusStructureParts := make([]schema.FieldDescriptor, 0, len(extracted))
-	statusDryRunResults := make(map[string][]ref.Val, len(fieldDescriptors))
-	for _, found := range fieldDescriptors {
-		// For each expression in the extracted ExpressionField we need to dry-run
-		// the expression to infer the type of the status field.
-		evals := []ref.Val{}
-		for _, expr := range found.Expressions {
-			// we need to inspect the expression to understand how it relates to the
-			// resources defined in the resource graph definition.
-			err := validateCELExpressionContext(env, expr, resourceNames)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to validate expression context: %w", err)
-			}
-
-			// resources is the context here.
-			value, err := dryRunExpression(env, expr, resources)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to dry-run expression: %w", err)
-			}
-
-			evals = append(evals, value)
-		}
-		statusDryRunResults[found.Path] = evals
-	}
-
-	statusSchema, err := schema.GenerateSchemaFromEvals(statusDryRunResults)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to build JSON schema from status structure: %w", err)
-	}
-	return statusSchema, fieldDescriptors, nil
+	return fieldDescriptors, nil
 }
 
 // validateCELExpressionContext validates the given CEL expression in the context

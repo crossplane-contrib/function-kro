@@ -19,9 +19,8 @@ import (
 
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
-	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-
 	"github.com/upbound/function-kro/kro/graph/fieldpath"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 // fieldDescriptor represents a field in an OpenAPI schema. Typically this field
@@ -65,7 +64,7 @@ type fieldDescriptor struct {
 	// The path is typically found by calling `parser.ParseSchemalessResource` see the
 	// `typesystem/parser` package for more information.
 	Path string
-	// Schema is the schema for the field. This is typically inferred by dry runing
+	// Schema is the schema for the field. This is typically inferred by dry running
 	// the CEL expression that generates the field value, then converting the result
 	// into an OpenAPI schema.
 	Schema *extv1.JSONSchemaProps

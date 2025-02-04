@@ -16,13 +16,12 @@ package graph
 import (
 	"slices"
 
+	rgschema "github.com/upbound/function-kro/kro/graph/schema"
+	"github.com/upbound/function-kro/kro/graph/variable"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/kube-openapi/pkg/validation/spec"
-
-	rgschema "github.com/upbound/function-kro/kro/graph/schema"
-	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 // Resource represents a resource in a resource graph definition, it hholds

@@ -16,26 +16,11 @@ package schema
 import (
 	"k8s.io/apiextensions-apiserver/pkg/generated/openapi"
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
 )
 
 // NewCombinedResolver creates a new schema resolver that can resolve both core and client types.
-func NewCombinedResolver(clientConfig *rest.Config) (resolver.SchemaResolver, *discovery.DiscoveryClient, error) {
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(clientConfig)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// ClientResolver is a resolver that uses the discovery client to resolve
-	// client types. It is used to resolve types that are not known at compile
-	// time a.k.a present in:
-	// https://github.com/kubernetes/apiextensions-apiserver/blob/master/pkg/generated/openapi/zz_generated.openapi.go
-	clientResolver := &resolver.ClientDiscoveryResolver{
-		Discovery: discoveryClient,
-	}
-
+func NewCombinedResolver() (resolver.SchemaResolver, error) {
 	// CoreResolver is a resolver that uses the OpenAPI definitions to resolve
 	// core types. It is used to resolve types that are known at compile time.
 	coreResolver := resolver.NewDefinitionsSchemaResolver(
@@ -43,8 +28,11 @@ func NewCombinedResolver(clientConfig *rest.Config) (resolver.SchemaResolver, *d
 		scheme.Scheme,
 	)
 
+	// TODO(negz): Combine the core resolver with a resolver.SchemaResolver
+	// backed by the CRDs of the composed resources.
+
 	// Combine the two resolvers to create a single resolver that can resolve
 	// both core and client types.
-	combinedResolver := coreResolver.Combine(clientResolver)
-	return combinedResolver, discoveryClient, nil
+	// combinedResolver := coreResolver.Combine(clientResolver)
+	return coreResolver, nil
 }
