@@ -20,6 +20,7 @@ import (
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/request"
 	"github.com/crossplane/function-sdk-go/resource"
+	"github.com/crossplane/function-sdk-go/resource/composed"
 	"github.com/crossplane/function-sdk-go/response"
 )
 
@@ -124,6 +125,27 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		response.Fatal(rsp, errors.Wrapf(err, "cannot set desired composite resource in %T", rsp))
 		return rsp, nil
 	}
+
+	desired, err := request.GetDesiredComposedResources(req)
+	if err != nil {
+		response.Fatal(rsp, errors.Wrapf(err, "cannot get desired resources from %T", req))
+		return rsp, nil
+	}
+
+	for _, resourceFromGraph := range g.Resources {
+		cd, err := composed.From(resourceFromGraph.Unstructured())
+		if err != nil {
+			response.Fatal(rsp, errors.Wrapf(err, "cannot convert %T to %T", resourceFromGraph, &composed.Unstructured{}))
+			return rsp, nil
+		}
+		desired[resource.Name("rg-"+resourceFromGraph.GetID())] = &resource.DesiredComposed{Resource: cd}
+	}
+
+	if err := response.SetDesiredComposedResources(rsp, desired); err != nil {
+		response.Fatal(rsp, errors.Wrapf(err, "cannot set desired composed resources in %T", rsp))
+		return rsp, nil
+	}
+
 	return rsp, nil
 }
 
