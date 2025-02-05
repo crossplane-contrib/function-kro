@@ -38,8 +38,8 @@ import (
 )
 
 // NewBuilder creates a new GraphBuilder instance.
-func NewBuilder() (*Builder, error) {
-	schemaResolver, err := schema.NewCombinedResolver()
+func NewBuilder(crds ...*extv1.CustomResourceDefinition) (*Builder, error) {
+	schemaResolver, err := schema.NewCombinedResolver(crds...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create schema resolver: %w", err)
 	}

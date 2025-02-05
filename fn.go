@@ -2,15 +2,20 @@ package main
 
 import (
 	"context"
+	"strings"
 
 	"github.com/upbound/function-kro/input/v1beta1"
 	"github.com/upbound/function-kro/kro/graph"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/json"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/request"
+	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
 )
 
@@ -33,26 +38,56 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// TODO(negz): This won't work yet. It needs a schema resolver that can get
-	// CEL schemas for composed resources. See schema/resolver.go.
-	gb, err := graph.NewBuilder()
+	oxr, err := request.GetObservedCompositeResource(req)
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot get observed composite resource"))
+		return rsp, nil
+	}
+
+	gvks := make([]schema.GroupVersionKind, 0, len(rg.Resources)+1)
+	gvks = append(gvks, schema.FromAPIVersionAndKind(oxr.Resource.GetAPIVersion(), oxr.Resource.GetKind()))
+	for _, r := range rg.Resources {
+		u := &unstructured.Unstructured{}
+		if err := json.Unmarshal(r.Template.Raw, u); err != nil {
+			response.Fatal(rsp, errors.Wrapf(err, "cannot unmarshal resource id %q", r.ID))
+			return rsp, nil
+		}
+		gvks = append(gvks, schema.FromAPIVersionAndKind(u.GetAPIVersion(), u.GetKind()))
+	}
+
+	// Tell Crossplane we need the CRDs for our XR and resource templates.
+	// TODO(negz): In v2 we'll need to handle resource templates for built-in
+	// types that don't have CRDs - e.g. Deployment.
+	rsp.Requirements = RequiredCRDs(gvks...)
+
+	// Process the extra CRDs we required.
+	crds := make([]*extv1.CustomResourceDefinition, len(gvks))
+	for i := range gvks {
+		e, ok := req.GetExtraResources()[gvks[i].String()]
+		if !ok {
+			// Crossplane hasn't sent us this required CRD. Let it know.
+			return rsp, nil
+		}
+
+		crd := &extv1.CustomResourceDefinition{}
+		if err := resource.AsObject(e.GetItems()[0].GetResource(), crd); err != nil {
+			response.Fatal(rsp, errors.Wrapf(err, "cannot unmarshal CRD for %s", gvks[i]))
+			return rsp, nil
+		}
+
+		crds[i] = crd
+	}
+
+	gb, err := graph.NewBuilder(crds...)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph builder"))
 		return rsp, nil
 	}
 
-	// TODO(negz): Use extra resources to get the XR CRD and pass it in.
 	// TODO(negz): Does the CRD need anything special from crd.SynthesizeCRD?
-	xrCRD := &extv1.CustomResourceDefinition{}
-	g, err := gb.NewResourceGraphDefinition(rg, xrCRD)
+	g, err := gb.NewResourceGraphDefinition(rg, crds[0])
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph"))
-		return rsp, nil
-	}
-
-	oxr, err := request.GetDesiredCompositeResource(req)
-	if err != nil {
-		response.Fatal(rsp, errors.Wrap(err, "cannot get observed composite resource"))
 		return rsp, nil
 	}
 
@@ -68,4 +103,21 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	_ = rt.GetInstance()
 
 	return rsp, nil
+}
+
+// RequiredCRDs returns the extra CRDs this function requires to run.
+func RequiredCRDs(gvks ...schema.GroupVersionKind) *fnv1.Requirements {
+	rq := &fnv1.Requirements{ExtraResources: map[string]*fnv1.ResourceSelector{}}
+
+	for _, gvk := range gvks {
+		rq.ExtraResources[gvk.String()] = &fnv1.ResourceSelector{
+			ApiVersion: "apiextensions.k8s.io/v1",
+			Kind:       "CustomResourceDefinition",
+			Match: &fnv1.ResourceSelector_MatchName{
+				MatchName: strings.ToLower(gvk.Kind + "s." + gvk.Group),
+			},
+		}
+	}
+
+	return rq
 }
