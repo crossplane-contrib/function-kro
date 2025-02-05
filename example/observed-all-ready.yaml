@@ -1,0 +1,125 @@
+---
+apiVersion: ec2.aws.upbound.io/v1beta1
+kind: VPC
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vpc
+  generateName: example-stack-
+  name: example-stack-randomvpc
+  labels:
+    crossplane.io/composite: example-stack
+  ownerReferences:
+  - apiVersion: example.crossplane.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: NetworkingStack
+    name: example-stack
+    uid: ""
+spec:
+  forProvider:
+    cidrBlock: 192.168.0.0/16
+    enableDnsHostnames: false
+    enableDnsSupport: true
+status:
+  atProvider:
+    id: some-cool-vpc
+---
+apiVersion: ec2.aws.upbound.io/v1beta1
+kind: SecurityGroup
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: securityGroup
+  generateName: example-stack-
+  name: example-stack-randomsg
+  labels:
+    crossplane.io/composite: example-stack
+  ownerReferences:
+  - apiVersion: example.crossplane.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: NetworkingStack
+    name: example-stack
+    uid: ""
+spec:
+  forProvider:
+    description: something something
+    name: my-sg-cool-network
+    vpcId: some-cool-vpc
+status:
+  atProvider:
+    id: some-cool-securitygroup
+---
+apiVersion: ec2.aws.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: subnetAZA
+  generateName: example-stack-
+  name: example-stack-subnet-a
+  labels:
+    crossplane.io/composite: example-stack
+  ownerReferences:
+  - apiVersion: example.crossplane.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: NetworkingStack
+    name: example-stack
+    uid: ""
+spec:
+  forProvider:
+    availabilityZone: us-west-2a
+    cidrBlock: 192.168.0.0/18
+    vpcId: some-cool-vpc
+status:
+  atProvider:
+    id: some-cool-subneta
+---
+apiVersion: ec2.aws.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: subnetAZB
+  generateName: example-stack-
+  name: example-stack-subnetb
+  labels:
+    crossplane.io/composite: example-stack
+  ownerReferences:
+  - apiVersion: example.crossplane.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: NetworkingStack
+    name: example-stack
+    uid: ""
+spec:
+  forProvider:
+    availabilityZone: us-west-2b
+    cidrBlock: 192.168.64.0/18
+    vpcId: some-cool-vpc
+status:
+  atProvider:
+    id: some-cool-subnetb
+---
+apiVersion: ec2.aws.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: subnetAZC
+  generateName: example-stack-
+  name: example-stack-subnetc
+  labels:
+    crossplane.io/composite: example-stack
+  ownerReferences:
+  - apiVersion: example.crossplane.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: NetworkingStack
+    name: example-stack
+    uid: ""
+spec:
+  forProvider:
+    availabilityZone: us-west-2b
+    cidrBlock: 192.168.128.0/18
+    vpcId: some-cool-vpc
+status:
+  atProvider:
+    id: some-cool-subnetb

@@ -68,13 +68,22 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	for i := range gvks {
 		e, ok := req.GetExtraResources()[gvks[i].String()]
 		if !ok {
-			// Crossplane hasn't sent us this required CRD. Let it know.
+			// Crossplane hasn't sent us this required CRD yet. Let it know.
+			f.log.Debug("Required CRD doesn't appear in extra resources - returning requirements", "gvk", gvks[i].String())
+			return rsp, nil
+		}
+
+		if len(e.GetItems()) < 1 {
+			// Crossplane is telling us the required CRD doesn't exist.
+			f.log.Debug("Required CRD is unavailable", "gvk", gvks[i].String())
+			response.Fatal(rsp, errors.Errorf("required CRD for %q is unavailable", gvks[i]))
 			return rsp, nil
 		}
 
 		crd := &extv1.CustomResourceDefinition{}
 		if err := resource.AsObject(e.GetItems()[0].GetResource(), crd); err != nil {
-			response.Fatal(rsp, errors.Wrapf(err, "cannot unmarshal CRD for %s", gvks[i]))
+			f.log.Debug("Cannot unmarshal CRD", "gvk", gvks[i])
+			response.Fatal(rsp, errors.Wrapf(err, "cannot unmarshal CRD for %q", gvks[i]))
 			return rsp, nil
 		}
 

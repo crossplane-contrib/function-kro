@@ -136,7 +136,7 @@ func validateKubernetesObjectStructure(obj map[string]interface{}) error {
 
 	metadata, exists := obj["metadata"]
 	if !exists {
-		return fmt.Errorf("metadata field not found")
+		return nil
 	}
 	_, isMap := metadata.(map[string]interface{})
 	if !isMap {

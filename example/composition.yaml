@@ -1,11 +1,11 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: function-kro
+  name: networkingstack
 spec:
   compositeTypeRef:
     apiVersion: example.crossplane.io/v1
-    kind: XR
+    kind: NetworkingStack
   mode: Pipeline
   pipeline:
   - step: kro-run
@@ -14,10 +14,56 @@ spec:
     input:
       apiVersion: kro.fn.crossplane.io/v1beta1
       kind: ResourceGraph
+      status:
+        networkingInfo:
+          vpcID: ${vpc.status.atProvider.id}
+          subnetAZA: ${subnetAZA.status.atProvider.id}
+          subnetAZB: ${subnetAZB.status.atProvider.id}
+          subnetAZC: ${subnetAZC.status.atProvider.id}
+          securityGroup: ${securityGroup.status.atProvider.id}
       resources:
-        - id: test
-          template:
-            apiVersion: apiextensions.crossplane.io/v1beta1
-            kind: EnvironmentConfig
-            data:
-              test: data
+      - id: vpc
+        template:
+          apiVersion: ec2.aws.upbound.io/v1beta1
+          kind: VPC
+          spec:
+            forProvider:
+              cidrBlock: 192.168.0.0/16
+              enableDnsHostnames: false
+              enableDnsSupport: true
+      - id: subnetAZA
+        template:
+          apiVersion: ec2.aws.upbound.io/v1beta1
+          kind: Subnet
+          spec:
+            forProvider:
+              availabilityZone: us-west-2a
+              cidrBlock: 192.168.0.0/18
+              vpcId: ${vpc.status.atProvider.id}
+      - id: subnetAZB
+        template:
+          apiVersion: ec2.aws.upbound.io/v1beta1
+          kind: Subnet
+          spec:
+            forProvider:
+              availabilityZone: us-west-2b
+              cidrBlock: 192.168.64.0/18
+              vpcId: ${vpc.status.atProvider.id}
+      - id: subnetAZC
+        template:
+          apiVersion: ec2.aws.upbound.io/v1beta1
+          kind: Subnet
+          spec:
+            forProvider:
+              availabilityZone: us-west-2b
+              cidrBlock: 192.168.128.0/18
+              vpcId: ${vpc.status.atProvider.id}
+      - id: securityGroup
+        template:
+          apiVersion: ec2.aws.upbound.io/v1beta1
+          kind: SecurityGroup
+          spec:
+            forProvider:
+              name: my-sg-${schema.spec.name}
+              description: something something
+              vpcId: ${vpc.status.atProvider.id}

@@ -1,6 +1,6 @@
-# Replace this with your XR!
 apiVersion: example.crossplane.io/v1
-kind: XR
+kind: NetworkingStack
 metadata:
-  name: example-xr
-spec: {}
+  name: example-stack
+spec:
+  name: cool-network
