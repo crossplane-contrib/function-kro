@@ -14,10 +14,14 @@ spec:
     input:
       apiVersion: kro.fn.crossplane.io/v1beta1
       kind: ResourceGraph
+      status:
+        test: field
       resources:
         - id: test
           template:
             apiVersion: apiextensions.crossplane.io/v1beta1
             kind: EnvironmentConfig
+            metadata:
+              name: envconfig-from-kro
             data:
               test: data

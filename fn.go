@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
+
+	jsone "encoding/json"
 
 	"github.com/upbound/function-kro/input/v1beta1"
 	"github.com/upbound/function-kro/kro/graph"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/json"
@@ -70,6 +74,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		}
 
 		crd := &extv1.CustomResourceDefinition{}
+		if len(e.GetItems()) == 0 {
+			response.Fatal(rsp, errors.Errorf("cannot find CRD  %s", gvks[i]))
+			return rsp, nil
+		}
 		if err := resource.AsObject(e.GetItems()[0].GetResource(), crd); err != nil {
 			response.Fatal(rsp, errors.Wrapf(err, "cannot unmarshal CRD for %s", gvks[i]))
 			return rsp, nil
@@ -84,6 +92,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	debugPrintCRDs(crds)
 	// TODO(negz): Does the CRD need anything special from crd.SynthesizeCRD?
 	g, err := gb.NewResourceGraphDefinition(rg, crds[0])
 	if err != nil {
@@ -99,9 +108,22 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	dxr, err := request.GetDesiredCompositeResource(req)
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot get desired composite resource"))
+		return rsp, nil
+	}
 	// TODO(negz): Pickup from here: https://github.com/kro-run/kro/blob/87a9b1c460854170e9bceac001ff870933d6a084/pkg/controller/instance/controller_reconcile.go#L63
-	_ = rt.GetInstance()
-
+	dxr.Resource.Object = rt.GetInstance().Object
+	if err := dxr.Resource.SetValue("status", rg.Status); err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot write updated status back into composite resource"))
+		return rsp, nil
+	}
+	// Save the updated desired composite resource
+	if err := response.SetDesiredCompositeResource(rsp, dxr); err != nil {
+		response.Fatal(rsp, errors.Wrapf(err, "cannot set desired composite resource in %T", rsp))
+		return rsp, nil
+	}
 	return rsp, nil
 }
 
@@ -120,4 +142,15 @@ func RequiredCRDs(gvks ...schema.GroupVersionKind) *fnv1.Requirements {
 	}
 
 	return rq
+}
+
+func debugPrintCRDs(crds []*v1.CustomResourceDefinition) {
+	for i, crd := range crds {
+		data, err := jsone.MarshalIndent(crd, "", "  ")
+		if err != nil {
+			fmt.Printf("Error marshalling CRD[%d]: %v\n", i, err)
+			continue
+		}
+		fmt.Printf("CRD[%d]: %s\n", i, string(data))
+	}
 }
