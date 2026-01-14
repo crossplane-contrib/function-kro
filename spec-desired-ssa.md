@@ -117,13 +117,13 @@ returned, causing the function to claim ownership of:
 
 ### Fix
 
-Modify `GetResource()` to always return the rendered template. The
-`resolvedResources` map should only be used for CEL evaluation context, not as
-the source for desired state:
+Add a new `GetRenderedResource()` method that always returns the rendered
+template, leaving `GetResource()` unchanged for backward compatibility with
+upstream kro:
 
 ```go
-// runtime.go - modified GetResource
-func (rt *ResourceGraphDefinitionRuntime) GetResource(id string) (*unstructured.Unstructured, ResourceState) {
+// runtime.go - new method
+func (rt *ResourceGraphDefinitionRuntime) GetRenderedResource(id string) (*unstructured.Unstructured, ResourceState) {
     if !rt.canProcessResource(id) {
         return nil, ResourceStateWaitingOnDependencies
     }
@@ -132,13 +132,17 @@ func (rt *ResourceGraphDefinitionRuntime) GetResource(id string) (*unstructured.
 }
 ```
 
+Then update `fn.go` to use `GetRenderedResource()` instead of `GetResource()`
+when producing desired state.
+
 The `SetResource()` method continues to populate `resolvedResources` for:
 
 - CEL evaluation in `evaluateDynamicVariables()` (e.g. `${vpc.status.atProvider.id}`)
 - Readiness checks in `IsResourceReady()`
 
 This separates the read path (observed resources for CEL context) from the write
-path (rendered templates for desired state).
+path (rendered templates for desired state), while preserving the original
+`GetResource()` behavior for any code that expects it.
 
 ## Upstream kro
 

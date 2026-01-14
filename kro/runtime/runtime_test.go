@@ -627,6 +627,104 @@ func Test_GetResource(t *testing.T) {
 		})
 	}
 }
+
+func Test_GetRenderedResource(t *testing.T) {
+	tests := []struct {
+		name              string
+		resources         map[string]Resource
+		resolvedResources map[string]*unstructured.Unstructured
+		runtimeVariables  map[string][]*expressionEvaluationState
+		resourceName      string
+		wantObj           *unstructured.Unstructured
+		wantState         ResourceState
+	}{
+		{
+			// GetRenderedResource always returns the template, even when an
+			// observed resource exists in resolvedResources. This is critical
+			// for SSA - desired state must not include provider-defaulted fields.
+			name: "returns template not observed",
+			resources: map[string]Resource{
+				"test": newTestResource(
+					withObject(map[string]interface{}{
+						"spec": map[string]interface{}{
+							"value": "template",
+						},
+					}),
+				),
+			},
+			resolvedResources: map[string]*unstructured.Unstructured{
+				"test": {
+					Object: map[string]interface{}{
+						"spec": map[string]interface{}{
+							"value":         "observed",
+							"defaultedFlag": true, // Provider-defaulted field
+						},
+					},
+				},
+			},
+			resourceName: "test",
+			wantObj: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"value": "template",
+					},
+				},
+			},
+			wantState: ResourceStateResolved,
+		},
+		{
+			name: "waiting on dependencies",
+			resources: map[string]Resource{
+				"test": newTestResource(
+					withObject(map[string]interface{}{
+						"spec": map[string]interface{}{
+							"value": "${expr1}",
+						},
+					}),
+					withVariables([]*variable.ResourceField{
+						{
+							FieldDescriptor: variable.FieldDescriptor{
+								Path:        "spec.value",
+								Expressions: []string{"expr1"},
+							},
+						},
+					}),
+				),
+			},
+			runtimeVariables: map[string][]*expressionEvaluationState{
+				"test": {
+					{
+						Kind:     variable.ResourceVariableKindDynamic,
+						Resolved: false,
+					},
+				},
+			},
+			resourceName: "test",
+			wantObj:      nil,
+			wantState:    ResourceStateWaitingOnDependencies,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := &ResourceGraphDefinitionRuntime{
+				resources:         tt.resources,
+				resolvedResources: tt.resolvedResources,
+				runtimeVariables:  tt.runtimeVariables,
+			}
+
+			gotObj, gotState := rt.GetRenderedResource(tt.resourceName)
+			if gotState != tt.wantState {
+				t.Errorf("GetRenderedResource() state = %v, want %v", gotState, tt.wantState)
+			}
+
+			if !reflect.DeepEqual(gotObj, tt.wantObj) {
+				t.Errorf("GetRenderedResource() obj = %v, want %v", gotObj, tt.wantObj)
+			}
+		})
+	}
+}
+
 func Test_Synchronize(t *testing.T) {
 	tests := []struct {
 		name              string

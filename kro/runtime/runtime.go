@@ -202,6 +202,19 @@ func (rt *ResourceGraphDefinitionRuntime) GetResource(id string) (*unstructured.
 	return nil, ResourceStateWaitingOnDependencies
 }
 
+// GetRenderedResource returns the rendered resource template for desired state.
+//
+// Unlike GetResource, this always returns the rendered template with CEL
+// expressions resolved - never an observed resource stored via SetResource.
+// Use this method when producing desired state for SSA to avoid claiming
+// ownership of fields set by providers or other controllers.
+func (rt *ResourceGraphDefinitionRuntime) GetRenderedResource(id string) (*unstructured.Unstructured, ResourceState) {
+	if !rt.canProcessResource(id) {
+		return nil, ResourceStateWaitingOnDependencies
+	}
+	return rt.resources[id].Unstructured(), ResourceStateResolved
+}
+
 // SetResource updates or sets a resource in the runtime. This is typically
 // called after a resource has been created or updated in the cluster.
 func (rt *ResourceGraphDefinitionRuntime) SetResource(id string, resource *unstructured.Unstructured) {

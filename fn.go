@@ -149,7 +149,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			continue
 		}
 
-		r, state := rt.GetResource(id)
+		// Use GetRenderedResource to get the template with CEL expressions
+		// resolved, rather than GetResource which returns observed state.
+		// This is critical for SSA - desired state must only contain fields
+		// we want to own, not provider-defaulted fields from observed state.
+		r, state := rt.GetRenderedResource(id)
 		if state != runtime.ResourceStateResolved {
 			f.log.Info("Skipping unresolved resource", "id", id, "state", state)
 			continue
