@@ -143,7 +143,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	for _, id := range rt.TopologicalOrder() {
-		if want, err := rt.WantToCreateResource(id); err != nil || !want {
+		if want, err := rt.ReadyToProcessResource(id); err != nil || !want {
 			f.log.Info("Skipping resource", "id", id, "err", err)
 			rt.IgnoreResource(id)
 			continue

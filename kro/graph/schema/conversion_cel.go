@@ -1,15 +1,16 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package schema
 
@@ -17,8 +18,8 @@ import (
 	"fmt"
 
 	"github.com/google/cel-go/common/types/ref"
-	krocel "github.com/upbound/function-kro/kro/cel"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/utils/ptr"
 )
 
 // inferSchemaFromCELValue infers a JSONSchemaProps from a CEL value.
@@ -26,11 +27,8 @@ func inferSchemaFromCELValue(val ref.Val) (*extv1.JSONSchemaProps, error) {
 	if val == nil {
 		return nil, fmt.Errorf("value is nil")
 	}
-	goRuntimeVal, err := krocel.GoNativeType(val)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert CEL value to Go: %w", err)
-	}
-	return inferSchemaTypeFromGoValue(goRuntimeVal)
+
+	return inferSchemaTypeFromGoValue(val.Value())
 }
 
 func inferSchemaTypeFromGoValue(goRuntimeVal interface{}) (*extv1.JSONSchemaProps, error) {
@@ -59,6 +57,11 @@ func inferSchemaTypeFromGoValue(goRuntimeVal interface{}) (*extv1.JSONSchemaProp
 		return inferArraySchema(goRuntimeVal)
 	case map[string]interface{}:
 		return inferObjectSchema(goRuntimeVal)
+	case nil:
+		return &extv1.JSONSchemaProps{
+			Description:            "the original schema type was optional or nil so any type is allowed",
+			XPreserveUnknownFields: ptr.To(true),
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported type: %T", goRuntimeVal)
 	}

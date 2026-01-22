@@ -1,22 +1,23 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package variable
 
 import (
 	"slices"
 
-	"k8s.io/kube-openapi/pkg/validation/spec"
+	"github.com/google/cel-go/cel"
 )
 
 // FieldDescriptor represents a field that contains CEL expressions in it. It
@@ -31,19 +32,24 @@ type FieldDescriptor struct {
 	Path string
 	// Expressions is a list of CEL expressions in the field.
 	Expressions []string
-	// ExpectedType is the expected type of the field.
-	ExpectedTypes []string
-	// ExpectedSchema is the expected schema of the field if it is a complex type.
-	// This is only set if the field is a OneShotCEL expression, and the schema
-	// is expected to be a complex type (object or array).
-	ExpectedSchema *spec.Schema
-	// StandaloneExpression is true if the field contains a single CEL expression
-	// that is not part of a larger string. example: "${foo}" is a standalone expression
-	// but not "hello-${foo}" or "${foo}${bar}"
+
+	// ExpectedType is the expected CEL type of the field.
+	// Set by: builder.setExpectedTypeOnDescriptor() - the single place where types are determined.
+	// Parser leaves this nil, builder sets it based on StandaloneExpression:
+	//   - For string templates (StandaloneExpression=false): always cel.StringType
+	//   - For standalone expressions (StandaloneExpression=true): derived from OpenAPI schema
+	ExpectedType *cel.Type
+
+	// StandaloneExpression indicates if this is a single CEL expression vs a string template.
+	// Set by: parser (both parser.go and schemaless.go)
+	// Used by: builder.setExpectedTypeOnDescriptor() to determine how to set ExpectedType
+	// Examples:
+	//   true:  "${foo}" - single expression, type derived from schema
+	//   false: "hello-${foo}" or "${foo}-${bar}" - string template, always produces string
 	StandaloneExpression bool
 }
 
-// ResourceVariable represents a variable in a resource. Variables are any
+// ResourceField ResourceVariable represents a variable in a resource. Variables are any
 // field in a resource (under resources[*].definition) that is not a constant
 // value a.k.a contains one or multiple expressions. For example
 //
@@ -55,10 +61,10 @@ type FieldDescriptor struct {
 // execution and their value is constant. Dynamic variables are resolved at
 // runtime and their value can change during the execution.
 //
-// ResourceVariables are an extension of CELField and they contain additional
+// ResourceVariables are an extension of CELField, and they contain additional
 // information about the variable kind.
 type ResourceField struct {
-	// CELField is the object that contains the expression, the path, and the
+	// CELField is the object that contains the expression, the path, and
 	// the expected type (OpenAPI schema).
 	FieldDescriptor
 	// ResourceVariableKind is the kind of the variable (static or dynamic).
@@ -81,13 +87,13 @@ func (rv *ResourceField) AddDependencies(dep ...string) {
 	}
 }
 
-// ResourceVariableKind represents the kind of a resource variable.
+// ResourceVariableKind represents the kind of resource variable.
 type ResourceVariableKind string
 
 const (
 	// ResourceVariableKindStatic represents a static variable. Static variables
 	// are resolved at the beginning of the execution and their value is constant.
-	// Static variables are easy to find, they always start with 'spec'. Refereing
+	// Static variables are easy to find, they always start with 'spec'. Referring
 	// to the instance spec.
 	//
 	// For example:

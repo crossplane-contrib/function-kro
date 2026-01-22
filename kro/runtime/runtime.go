@@ -1,15 +1,16 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package runtime
 
@@ -17,6 +18,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/google/cel-go/cel"
 	"golang.org/x/exp/maps"
@@ -53,18 +55,22 @@ func NewResourceGraphDefinitionRuntime(
 		resolvedResources:            make(map[string]*unstructured.Unstructured),
 		runtimeVariables:             make(map[string][]*expressionEvaluationState),
 		expressionsCache:             make(map[string]*expressionEvaluationState),
+		celProgramCache:              make(map[string]cel.Program),
 		ignoredByConditionsResources: make(map[string]bool),
 	}
 	// make sure to copy the variables and the dependencies, to avoid
 	// modifying the original resource.
 	for id, resource := range resources {
+		if yes, _ := r.ReadyToProcessResource(id); !yes {
+			continue
+		}
 		// Process the resource variables.
 		for _, variable := range resource.GetVariables() {
 			for _, expr := range variable.Expressions {
-				// If cached use the same pointer.
+				// If cached, use the same pointer.
 				if ec, seen := r.expressionsCache[expr]; seen {
 					// NOTE(a-hilaly): This strikes me as an early optimization, but
-					// it's a good one, i believe... We can always remove it if it's
+					// it's a good one, I believe... We can always remove it if it's
 					// too magical.
 					r.runtimeVariables[id] = append(r.runtimeVariables[id], ec)
 					continue
@@ -157,13 +163,22 @@ type ResourceGraphDefinitionRuntime struct {
 	// vice versa.
 	expressionsCache map[string]*expressionEvaluationState
 
+	// celProgramCache caches compiled CEL programs by expression string to
+	// avoid recompiling the same expression multiple times. This improves
+	// performance during expression evaluation by reusing previously compiled
+	// programs.
+	celProgramCache map[string]cel.Program
+	// celProgramCacheMu is a mutex that protects access to the celProgramCache
+	// to ensure thread safety during concurrent reads and writes.
+	celProgramCacheMu sync.RWMutex
+
 	// topologicalOrder holds the dependency order of resources. This order
 	// ensures that resources are processed in a way that respects their
 	// dependencies, preventing circular dependencies and ensuring efficient
 	// synchronization.
 	topologicalOrder []string
 
-	// ignoredByConditionsResources holds the resources whos defined conditions returned false
+	// ignoredByConditionsResources holds the resources who's defined conditions returned false
 	// or who's dependencies are ignored
 	ignoredByConditionsResources map[string]bool
 }
@@ -325,7 +340,7 @@ func (rt *ResourceGraphDefinitionRuntime) evaluateStaticVariables() error {
 	}
 	for _, variable := range rt.expressionsCache {
 		if variable.Kind.IsStatic() {
-			value, err := evaluateExpression(env, evalContext, variable.Expression)
+			value, err := rt.evaluateExpression(env, evalContext, variable.Expression)
 			if err != nil {
 				return err
 			}
@@ -365,7 +380,7 @@ func (rt *ResourceGraphDefinitionRuntime) evaluateDynamicVariables() error {
 		return err
 	}
 
-	// let's iterate over any resolved resource and try to resolve
+	// Let's iterate over any resolved resource and try to resolve
 	// the dynamic variables that depend on it.
 	// Since we have already cached the expressions, we don't need to
 	// loop over all the resources.
@@ -390,7 +405,7 @@ func (rt *ResourceGraphDefinitionRuntime) evaluateDynamicVariables() error {
 
 			evalContext["schema"] = rt.instance.Unstructured().Object
 
-			value, err := evaluateExpression(env, evalContext, variable.Expression)
+			value, err := rt.evaluateExpression(env, evalContext, variable.Expression)
 			if err != nil {
 				if strings.Contains(err.Error(), "no such key") {
 					// TODO(a-hilaly): I'm not sure if this is the best way to handle
@@ -439,6 +454,10 @@ func (rt *ResourceGraphDefinitionRuntime) evaluateInstanceStatuses() error {
 // evaluateResourceExpressions processes all expressions associated with a
 // specific resource.
 func (rt *ResourceGraphDefinitionRuntime) evaluateResourceExpressions(resource string) error {
+	yes, _ := rt.ReadyToProcessResource(resource)
+	if !yes {
+		return nil
+	}
 	exprValues := make(map[string]interface{})
 	for _, v := range rt.expressionsCache {
 		if v.Resolved {
@@ -499,7 +518,7 @@ func (rt *ResourceGraphDefinitionRuntime) IsResourceReady(resourceID string) (bo
 	}
 
 	for _, expression := range expressions {
-		out, err := evaluateExpression(env, context, expression)
+		out, err := rt.evaluateExpression(env, context, expression)
 		if err != nil {
 			return false, "", fmt.Errorf("failed evaluating expressison %s: %w", expression, err)
 		}
@@ -511,7 +530,7 @@ func (rt *ResourceGraphDefinitionRuntime) IsResourceReady(resourceID string) (bo
 	return true, "", nil
 }
 
-// IgnoreResource ignores resource that has a conditions expressison that evaluated
+// IgnoreResource ignores resource that has a condition expression that evaluated
 // to false or whose dependencies are ignored
 func (rt *ResourceGraphDefinitionRuntime) IgnoreResource(resourceID string) {
 	rt.ignoredByConditionsResources[resourceID] = true
@@ -532,15 +551,15 @@ func (rt *ResourceGraphDefinitionRuntime) areDependenciesIgnored(resourceID stri
 	return false
 }
 
-// WantToCreateResource returns true if all the condition expressions return true
+// ReadyToProcessResource returns true if all the condition expressions return true
 // if not it will add itself to the ignored resources
-func (rt *ResourceGraphDefinitionRuntime) WantToCreateResource(resourceID string) (bool, error) {
+func (rt *ResourceGraphDefinitionRuntime) ReadyToProcessResource(resourceID string) (bool, error) {
 	if rt.areDependenciesIgnored(resourceID) {
 		return false, nil
 	}
 
-	conditions := rt.resources[resourceID].GetIncludeWhenExpressions()
-	if len(conditions) == 0 {
+	includeWhenExpressions := rt.resources[resourceID].GetIncludeWhenExpressions()
+	if len(includeWhenExpressions) == 0 {
 		return true, nil
 	}
 
@@ -555,34 +574,56 @@ func (rt *ResourceGraphDefinitionRuntime) WantToCreateResource(resourceID string
 		"schema": rt.instance.Unstructured().Object,
 	}
 
-	for _, condition := range conditions {
+	for _, includeWhenExpression := range includeWhenExpressions {
 		// We should not expect an error here as well since we checked during dry-run
-		value, err := evaluateExpression(env, context, condition)
+		value, err := rt.evaluateExpression(env, context, includeWhenExpression)
 		if err != nil {
 			return false, err
 		}
 		// returning a reason here to point out which expression is not ready yet
 		if !value.(bool) {
-			return false, fmt.Errorf("Skipping resource creation due to condition %s", condition)
+			return false, fmt.Errorf("skipping resource creation due to condition %s", includeWhenExpression)
 		}
 	}
 	return true, nil
 }
 
-// evaluateExpression evaluates an CEL expression and returns a value if successful, or error
-func evaluateExpression(env *cel.Env, context map[string]interface{}, expression string) (interface{}, error) {
-	ast, issues := env.Compile(expression)
-	if issues != nil && issues.Err() != nil {
-		return nil, fmt.Errorf("failed compiling expression %s: %w", expression, issues.Err())
+// evaluateExpression evaluates a CEL expression and returns a value if successful, or error.
+// It caches compiled programs by expression string to avoid redundant compilation.
+func (rt *ResourceGraphDefinitionRuntime) evaluateExpression(
+	env *cel.Env,
+	context map[string]interface{},
+	expression string,
+) (interface{}, error) {
+	var program cel.Program
+	var cached bool
+
+	if rt.celProgramCache != nil {
+		rt.celProgramCacheMu.RLock()
+		program, cached = rt.celProgramCache[expression]
+		rt.celProgramCacheMu.RUnlock()
 	}
-	// Here as well
-	program, err := env.Program(ast)
-	if err != nil {
-		return nil, fmt.Errorf("failed programming expression %s: %w", expression, err)
+
+	if !cached {
+		ast, issues := env.Compile(expression)
+		if issues != nil && issues.Err() != nil {
+			return nil, fmt.Errorf("failed compiling expression %s: %w", expression, issues.Err())
+		}
+
+		prog, err := env.Program(ast)
+		if err != nil {
+			return nil, fmt.Errorf("failed programming expression %s: %w", expression, err)
+		}
+
+		program = prog
+
+		if rt.celProgramCache != nil {
+			rt.celProgramCacheMu.Lock()
+			rt.celProgramCache[expression] = program
+			rt.celProgramCacheMu.Unlock()
+		}
 	}
-	// We get an error here when the value field we're looking for is not yet defined
-	// For now leaving it as error, in the future when we see different scenarios
-	// of this error we can make some a reason, and others an error
+
 	val, _, err := program.Eval(context)
 	if err != nil {
 		return nil, fmt.Errorf("failed evaluating expression %s: %w", expression, err)

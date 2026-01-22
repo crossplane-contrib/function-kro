@@ -1,126 +1,141 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package graph
 
 import (
 	"fmt"
 	"slices"
+	"strings"
 
-	cel "github.com/google/cel-go/cel"
-	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/cel"
+	"golang.org/x/exp/maps"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/apiserver/pkg/cel/openapi"
+	"k8s.io/apiserver/pkg/cel/openapi/resolver"
+	"k8s.io/kube-openapi/pkg/validation/spec"
+
 	"github.com/upbound/function-kro/input/v1beta1"
 	krocel "github.com/upbound/function-kro/kro/cel"
 	"github.com/upbound/function-kro/kro/cel/ast"
 	"github.com/upbound/function-kro/kro/graph/dag"
-	"github.com/upbound/function-kro/kro/graph/emulator"
+	"github.com/upbound/function-kro/kro/graph/fieldpath"
 	"github.com/upbound/function-kro/kro/graph/parser"
-	"github.com/upbound/function-kro/kro/graph/schema"
+	kroschema "github.com/upbound/function-kro/kro/graph/schema"
+	schemaresolver "github.com/upbound/function-kro/kro/graph/schema/resolver"
 	"github.com/upbound/function-kro/kro/graph/variable"
 	"github.com/upbound/function-kro/kro/metadata"
-	"golang.org/x/exp/maps"
-	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/yaml"
-	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 )
 
-// NewBuilder creates a new GraphBuilder instance.
+// NewBuilder creates a new GraphBuilder instance that uses CRDs directly
+// instead of API server discovery. This is adapted for Crossplane functions
+// which receive CRDs as extra resources.
 func NewBuilder(crds ...*extv1.CustomResourceDefinition) (*Builder, error) {
-	schemaResolver, err := schema.NewCombinedResolver(crds...)
+	schemaResolver, err := schemaresolver.NewCombinedResolver(crds...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create schema resolver: %w", err)
 	}
 
-	resourceEmulator := emulator.NewEmulator()
+	// Build a map of GVK to GVR from the CRDs for resource mapping
+	gvkToGVR := make(map[schema.GroupVersionKind]schema.GroupVersionResource)
+	for _, crd := range crds {
+		for _, v := range crd.Spec.Versions {
+			gvk := schema.GroupVersionKind{
+				Group:   crd.Spec.Group,
+				Version: v.Name,
+				Kind:    crd.Spec.Names.Kind,
+			}
+			gvr := schema.GroupVersionResource{
+				Group:    crd.Spec.Group,
+				Version:  v.Name,
+				Resource: crd.Spec.Names.Plural,
+			}
+			gvkToGVR[gvk] = gvr
+		}
+	}
+
+	// Build a map of GVK to scope (namespaced vs cluster-scoped)
+	gvkNamespaced := make(map[schema.GroupVersionKind]bool)
+	for _, crd := range crds {
+		namespaced := crd.Spec.Scope == extv1.NamespaceScoped
+		for _, v := range crd.Spec.Versions {
+			gvk := schema.GroupVersionKind{
+				Group:   crd.Spec.Group,
+				Version: v.Name,
+				Kind:    crd.Spec.Names.Kind,
+			}
+			gvkNamespaced[gvk] = namespaced
+		}
+	}
 
 	rgBuilder := &Builder{
-		resourceEmulator: resourceEmulator,
-		schemaResolver:   schemaResolver,
+		schemaResolver: schemaResolver,
+		gvkToGVR:       gvkToGVR,
+		gvkNamespaced:  gvkNamespaced,
 	}
 	return rgBuilder, nil
 }
 
-// Builder is an object that is responsible of constructing and managing
-// resourceGraphDefinitions. It is responsible of transforming the resourceGraphDefinition CRD
-// into a runtime representation that can be used to create the resources in
-// the cluster.
+// Builder is an object that is responsible for constructing and managing
+// resourceGraphs. It is responsible for transforming the ResourceGraph input
+// into a runtime representation that can be used to create the resources.
 //
-// The GraphBuild performs several key functions:
+// The GraphBuilder performs several key functions:
 //
-//	  1/ It validates the resource deinitions and their naming conventions.
-//	  2/ It interacts with the API Server to retrieve the OpenAPI schema for the
-//	     resources, and validates the resources against the schema.
-//	  3/ Extracts and processes the CEL expressions from the resources definitions.
-//	  4/ Builds the dependency graph between the resources, by inspecting the CEL
-//		    expressions.
-//	  5/ It infers and generates the schema for the instance resource, based on the
-//			SimpleSchema format.
+//  1. It validates the resource definitions and their naming conventions.
+//  2. It uses CRD schemas to retrieve the OpenAPI schema for the resources,
+//     and validates the resources against the schema.
+//  3. Extracts and processes the CEL expressions from the resources definitions.
+//  4. Builds the dependency graph between the resources, by inspecting the CEL
+//     expressions.
 //
 // If any of the above steps fail, the Builder will return an error.
-//
-// The resulting ResourceGraphDefinition object is a fulyl processed and validated
-// representation of a resource graph definition CR, it's underlying resources, and the
-// relationships between the resources. This object can be used to instantiate
-// a "runtime" data structure that can be used to create the resources in the
-// cluster.
 type Builder struct {
 	// schemaResolver is used to resolve the OpenAPI schema for the resources.
 	schemaResolver resolver.SchemaResolver
-	// resourceEmulator is used to emulate the resources. This is used to validate
-	// the CEL expressions in the resources. Because looking up the CEL expressions
-	// isn't enough for kro to validate the expressions.
-	//
-	// Maybe there is a better way, if anything probably there is a better way to
-	// validate the CEL expressions. To revisit.
-	resourceEmulator *emulator.Emulator
+	// gvkToGVR maps GroupVersionKind to GroupVersionResource
+	gvkToGVR map[schema.GroupVersionKind]schema.GroupVersionResource
+	// gvkNamespaced tracks whether each GVK is namespaced
+	gvkNamespaced map[schema.GroupVersionKind]bool
 }
 
-// NewResourceGraphDefinition creates a new ResourceGraphDefinition object from the given ResourceGraphDefinition
-// CRD. The ResourceGraphDefinition object is a fully processed and validated representation
-// of the resource graph definition CRD, it's underlying resources, and the relationships between
-// the resources.
-func (b *Builder) NewResourceGraphDefinition(rg *v1beta1.ResourceGraph, crd *extv1.CustomResourceDefinition) (*Graph, error) {
-	// Before anything else, let's copy the resource graph definition to avoid modifying the
+// NewResourceGraphDefinition creates a new Graph object from the given ResourceGraph
+// and the CRD for the composite resource. The Graph object is a fully processed
+// and validated representation of the resource graph, its underlying resources,
+// and the relationships between the resources.
+func (b *Builder) NewResourceGraphDefinition(rg *v1beta1.ResourceGraph, xrCRD *extv1.CustomResourceDefinition) (*Graph, error) {
+	// Before anything else, let's copy the resource graph to avoid modifying the
 	// original object.
 	rgd := rg.DeepCopy()
 
-	// There are a few steps to build a resource graph definition:
-	// 1. Validate the naming convention of the resource graph definition and its resources.
-	//    kro leverages CEL expressions to allow users to define new types and
-	//    express relationships between resources. This means that we need to ensure
-	//    that the names of the resources are valid to be used in CEL expressions.
-	//    for example name-something-something is not a valid name for a resource,
-	//    because in CEL - is a subtraction operator.
+	// Validate the naming convention of the resources.
+	// kro leverages CEL expressions to allow users to define new types and
+	// express relationships between resources. This means that we need to ensure
+	// that the names of the resources are valid to be used in CEL expressions.
 	err := validateResourceIDs(rgd)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate resourcegraphdefinition: %w", err)
+		return nil, fmt.Errorf("failed to validate resource graph: %w", err)
 	}
 
-	// Now that we did a basic validation of the resource graph definition, we can start understanding
-	// the resources that are part of the resource graph definition.
-
-	// For each resource in the resource graph definition, we need to:
-	// 1. Check if it looks like a valid Kubernetes resource. This means that it
-	//    has a group, version, and kind, and a metadata field.
+	// For each resource in the resource graph, we need to:
+	// 1. Check if it looks like a valid Kubernetes resource.
 	// 2. Based the GVK, we need to load the OpenAPI schema for the resource.
-	// 3. Emulate the resource, this is later used to verify the validity of the
-	//    CEL expressions.
-	// 4. Extract the CEL expressions from the resource + validate them.
+	// 3. Extract the CEL expressions from the resource + validate them.
 
-	// we'll also store the resources in a map for easy access later.
 	resources := make(map[string]*Resource)
 	for i, rgResource := range rgd.Resources {
 		id := rgResource.ID
@@ -135,181 +150,200 @@ func (b *Builder) NewResourceGraphDefinition(rg *v1beta1.ResourceGraph, crd *ext
 		resources[id] = r
 	}
 
-	// At this stage we have a superficial understanding of the resources that are
-	// part of the resource graph definition. We have the OpenAPI schema for each resource, and
-	// we have extracted the CEL expressions from the schema.
-	//
-	// Before we get into the dependency graph computation, we need to understand
-	// the shape of the instance resource (Mainly trying to understand the instance
-	// resource schema) to help validating the CEL expressions that are pointing to
-	// the instance resource e.g ${schema.spec.something.something}.
-	//
-	// You might wonder why are we building the resources before the instance resource?
-	// That's because the instance status schema is inferred from the CEL expressions
-	// in the status field of the instance resource. Those CEL expressions refer to
-	// the resources defined in the resource graph definition. Hence, we need to build the resources
-	// first, to be able to generate a proper schema for the instance status.
-
-	// Next, we need to understand the instance definition. The instance is
-	// the resource users will create in their cluster, to request the creation of
-	// the resources defined in the resource graph definition.
-	instance, err := b.buildInstanceResource(crd, rgd.Status, resources)
+	// Build the instance resource from the XR CRD
+	instance, err := b.buildInstanceResource(xrCRD, rgd, resources)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build resourcegraphdefinition '%v': %w", rgd.Name, err)
+		return nil, fmt.Errorf("failed to build instance resource: %w", err)
 	}
 
-	// Before getting into the dependency graph, we need to validate the CEL expressions
-	// in the instance resource. In order to do that, we need to isolate each resource
-	// and evaluate the CEL expressions in the context of the resource graph definition. This is done
-	// by dry-running the CEL expressions against the emulated resources.
-	err = validateResourceCELExpressions(resources, instance)
-	if err != nil {
-		return nil, fmt.Errorf("failed to validate resource CEL expressions: %w", err)
+	// Collect all OpenAPI schemas for CEL type checking
+	schemas := make(map[string]*spec.Schema)
+	for id, resource := range resources {
+		if resource.schema != nil {
+			schemas[id] = resource.schema
+		}
 	}
 
-	// Now that we have the instance resource, we can move into the next stage of
-	// building the resource graph definition. Understanding the relationships between the
-	// resources in the resource graph definition a.k.a the dependency graph.
-	//
-	// The dependency graph is an directed acyclic graph that represents the
-	// relationships between the resources in the resource graph definition. The graph is
-	// used to determine the order in which the resources should be created in the
-	// cluster.
-	//
-	// The dependency graph is built by inspecting the CEL expressions in the
-	// resources and the instance resource, using a CEL AST (Abstract Syntax Tree)
-	// inspector.
+	// Include the instance spec schema as "schema"
+	schemaWithoutStatus, err := getSchemaWithoutStatus(instance.crd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get schema without status: %w", err)
+	}
+	schemas["schema"] = schemaWithoutStatus
+
+	// Create a DeclTypeProvider for type introspection
+	typeProvider := krocel.CreateDeclTypeProvider(schemas)
+
+	// Build the dependency graph by inspecting CEL expressions
 	dag, err := b.buildDependencyGraph(resources)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build dependency graph: %w", err)
 	}
 
+	// Get topological order
 	topologicalOrder, err := dag.TopologicalSort()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get topological order: %w", err)
 	}
 
-	resourceGraphDefinition := &Graph{
+	// Create typed CEL environment for template expressions
+	templatesEnv, err := krocel.TypedEnvironment(schemas)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create typed CEL environment: %w", err)
+	}
+
+	// Create CEL environment for includeWhen expressions (schema only)
+	var schemaEnv *cel.Env
+	if schemas["schema"] != nil {
+		schemaEnv, err = krocel.TypedEnvironment(map[string]*spec.Schema{"schema": schemas["schema"]})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create CEL environment for includeWhen validation: %w", err)
+		}
+	}
+
+	// Validate all CEL expressions for each resource
+	for _, resource := range resources {
+		if err := validateNode(resource, templatesEnv, schemaEnv, schemas[resource.id], typeProvider); err != nil {
+			return nil, fmt.Errorf("failed to validate node %q: %w", resource.id, err)
+		}
+	}
+
+	resourceGraph := &Graph{
 		DAG:              dag,
 		Instance:         instance,
 		Resources:        resources,
 		TopologicalOrder: topologicalOrder,
 	}
-	return resourceGraphDefinition, nil
+	return resourceGraph, nil
+}
+
+// buildExternalRefResource builds an empty resource with metadata from the given externalRef definition.
+func (b *Builder) buildExternalRefResource(externalRef *v1beta1.ExternalRef) map[string]interface{} {
+	resourceObject := map[string]interface{}{}
+	resourceObject["apiVersion"] = externalRef.APIVersion
+	resourceObject["kind"] = externalRef.Kind
+	metadata := map[string]interface{}{
+		"name": externalRef.Metadata.Name,
+	}
+	if externalRef.Metadata.Namespace != "" {
+		metadata["namespace"] = externalRef.Metadata.Namespace
+	}
+	resourceObject["metadata"] = metadata
+	return resourceObject
 }
 
 // buildRGResource builds a resource from the given resource definition.
-// It provides a high-level understanding of the resource, by extracting the
-// OpenAPI schema, emualting the resource and extracting the cel expressions
-// from the schema.
-func (b *Builder) buildRGResource(rgResource *v1beta1.Resource, order int) (*Resource, error) {
-	// 1. We need to unmashal the resource into a map[string]interface{} to
-	//    make it easier to work with.
+func (b *Builder) buildRGResource(
+	rgResource *v1beta1.Resource,
+	order int,
+) (*Resource, error) {
+	// Unmarshal the resource into a map[string]interface{}
 	resourceObject := map[string]interface{}{}
-	err := yaml.UnmarshalStrict(rgResource.Template.Raw, &resourceObject)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal resource %s: %w", rgResource.ID, err)
+	if len(rgResource.Template.Raw) > 0 {
+		err := yaml.UnmarshalStrict(rgResource.Template.Raw, &resourceObject)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal resource %s: %w", rgResource.ID, err)
+		}
+	} else if rgResource.ExternalRef != nil {
+		resourceObject = b.buildExternalRefResource(rgResource.ExternalRef)
+	} else {
+		return nil, fmt.Errorf("exactly one of template or externalRef must be provided")
 	}
 
-	// 1. Check if it looks like a valid Kubernetes resource.
-	err = validateKubernetesObjectStructure(resourceObject)
+	// Validate it looks like a Kubernetes resource
+	err := validateKubernetesObjectStructure(resourceObject)
 	if err != nil {
 		return nil, fmt.Errorf("resource %s is not a valid Kubernetes object: %v", rgResource.ID, err)
 	}
 
-	// 2. Based the GVK, we need to load the OpenAPI schema for the resource.
+	// Extract GVK
 	gvk, err := metadata.ExtractGVKFromUnstructured(resourceObject)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract GVK from resource %s: %w", rgResource.ID, err)
 	}
 
-	// 3. Load the OpenAPI schema for the resource.
+	// Load OpenAPI schema
 	resourceSchema, err := b.schemaResolver.ResolveSchema(gvk)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema for resource %s: %w", rgResource.ID, err)
 	}
 
-	var emulatedResource *unstructured.Unstructured
-	var resourceVariables []*variable.ResourceField
-
-	// TODO(michaelhtm): CRDs are not supported for extraction currently
-	// implement new logic specific to CRDs
+	// Extract CEL fieldDescriptors from the resource
+	var fieldDescriptors []variable.FieldDescriptor
 	if gvk.Group == "apiextensions.k8s.io" && gvk.Version == "v1" && gvk.Kind == "CustomResourceDefinition" {
-		celExpressions, err := parser.ParseSchemalessResource(resourceObject)
+		fieldDescriptors, err = parser.ParseSchemalessResource(resourceObject)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse schemaless resource %s: %w", rgResource.ID, err)
 		}
-		if len(celExpressions) > 0 {
-			return nil, fmt.Errorf("failed, CEL expressions are not supported for CRDs, resource %s", rgResource.ID)
+
+		for _, expr := range fieldDescriptors {
+			if !strings.HasPrefix(expr.Path, "metadata.") {
+				return nil, fmt.Errorf("CEL expressions in CRDs are only supported for metadata fields, found in path %q, resource %s", expr.Path, rgResource.ID)
+			}
 		}
 	} else {
-
-		// 4. Emulate the resource, this is later used to verify the validity of the
-		//    CEL expressions.
-		emulatedResource, err = b.resourceEmulator.GenerateDummyCR(gvk, resourceSchema)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate dummy CR for resource %s: %w", rgResource.ID, err)
-		}
-
-		// 5. Extract CEL fieldDescriptors from the schema.
-		fieldDescriptors, err := parser.ParseResource(resourceObject, resourceSchema)
+		fieldDescriptors, err = parser.ParseResource(resourceObject, resourceSchema)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract CEL expressions from schema for resource %s: %w", rgResource.ID, err)
 		}
-		for _, fieldDescriptor := range fieldDescriptors {
-			resourceVariables = append(resourceVariables, &variable.ResourceField{
-				// Assume variables are static, we'll validate them later
-				Kind:            variable.ResourceVariableKindStatic,
-				FieldDescriptor: fieldDescriptor,
-			})
+
+		// Set ExpectedType on each descriptor
+		for i := range fieldDescriptors {
+			setExpectedTypeOnDescriptor(&fieldDescriptors[i], resourceSchema, rgResource.ID)
 		}
 	}
 
-	// 6. Parse ReadyWhen expressions
+	templateVariables := make([]*variable.ResourceField, 0, len(fieldDescriptors))
+	for _, fieldDescriptor := range fieldDescriptors {
+		templateVariables = append(templateVariables, &variable.ResourceField{
+			Kind:            variable.ResourceVariableKindStatic,
+			FieldDescriptor: fieldDescriptor,
+		})
+	}
+
+	// Parse ReadyWhen expressions
 	readyWhen, err := parser.ParseConditionExpressions(rgResource.ReadyWhen)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse readyWhen expressions: %v", err)
 	}
 
-	// 7. Parse condition expressions
+	// Parse IncludeWhen expressions
 	includeWhen, err := parser.ParseConditionExpressions(rgResource.IncludeWhen)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse includeWhen expressions: %v", err)
 	}
 
-	// Note that at this point we don't inject the dependencies into the resource.
+	// Get GVR and namespaced scope from our maps
+	gvr, ok := b.gvkToGVR[gvk]
+	if !ok {
+		// Fallback: compute GVR from GVK (pluralize kind)
+		gvr = schema.GroupVersionResource{
+			Group:    gvk.Group,
+			Version:  gvk.Version,
+			Resource: strings.ToLower(gvk.Kind) + "s",
+		}
+	}
+	namespaced := b.gvkNamespaced[gvk]
+
 	return &Resource{
 		id:                     rgResource.ID,
-		gvr:                    metadata.GVKtoGVR(gvk),
+		gvr:                    gvr,
 		schema:                 resourceSchema,
-		emulatedObject:         emulatedResource,
 		originalObject:         &unstructured.Unstructured{Object: resourceObject},
-		variables:              resourceVariables,
+		variables:              templateVariables,
 		readyWhenExpressions:   readyWhen,
 		includeWhenExpressions: includeWhen,
-		namespaced:             false, // TODO(negz): Crossplane v2 will need to handle this.
+		namespaced:             namespaced,
 		order:                  order,
+		isExternalRef:          rgResource.ExternalRef != nil,
 	}, nil
 }
 
-// buildDependencyGraph builds the dependency graph between the resources in the
-// resource graph definition. The dependency graph is an directed acyclic graph that represents
-// the relationships between the resources in the resource graph definition. The graph is used
-// to determine the order in which the resources should be created in the cluster.
-//
-// This function returns the DAG, and a map of runtime variables per resource. later
-// on we'll use this map to resolve the runtime variables.
+// buildDependencyGraph builds the dependency graph between the resources.
 func (b *Builder) buildDependencyGraph(
 	resources map[string]*Resource,
-) (
-	// directed acyclic graph
-	*dag.DirectedAcyclicGraph,
-	// map of runtime variables per resource
-	error,
-) {
-
+) (*dag.DirectedAcyclicGraph[string], error) {
 	resourceNames := maps.Keys(resources)
-	// We also want to allow users to refer to the instance spec in their expressions.
 	resourceNames = append(resourceNames, "schema")
 
 	env, err := krocel.DefaultEnvironment(krocel.WithResourceIDs(resourceNames))
@@ -317,8 +351,7 @@ func (b *Builder) buildDependencyGraph(
 		return nil, fmt.Errorf("failed to create CEL environment: %w", err)
 	}
 
-	directedAcyclicGraph := dag.NewDirectedAcyclicGraph()
-	// Set the vertices of the graph to be the resources defined in the resource graph definition.
+	directedAcyclicGraph := dag.NewDirectedAcyclicGraph[string]()
 	for _, resource := range resources {
 		if err := directedAcyclicGraph.AddVertex(resource.id, resource.order); err != nil {
 			return nil, fmt.Errorf("failed to add vertex to graph: %w", err)
@@ -326,32 +359,19 @@ func (b *Builder) buildDependencyGraph(
 	}
 
 	for _, resource := range resources {
-		for _, resourceVariable := range resource.variables {
-			for _, expression := range resourceVariable.Expressions {
-				// We need to inspect the expression to understand how it relates to the
-				// resources defined in the resource graph definition.
-				err := validateCELExpressionContext(env, expression, resourceNames)
-				if err != nil {
-					return nil, fmt.Errorf("failed to validate expression context: %w", err)
-				}
-
-				// We need to extract the dependencies from the expression.
+		for _, templateVariable := range resource.variables {
+			for _, expression := range templateVariable.Expressions {
 				resourceDependencies, isStatic, err := extractDependencies(env, expression, resourceNames)
 				if err != nil {
 					return nil, fmt.Errorf("failed to extract dependencies: %w", err)
 				}
 
-				// Static until proven dynamic.
-				//
-				// This reads as: If the expression is dynamic and the resource variable is
-				// static, then we need to mark the resource variable as dynamic.
-				if !isStatic && resourceVariable.Kind == variable.ResourceVariableKindStatic {
-					resourceVariable.Kind = variable.ResourceVariableKindDynamic
+				if !isStatic && templateVariable.Kind == variable.ResourceVariableKindStatic {
+					templateVariable.Kind = variable.ResourceVariableKindDynamic
 				}
 
 				resource.addDependencies(resourceDependencies...)
-				resourceVariable.AddDependencies(resourceDependencies...)
-				// We need to add the dependencies to the graph.
+				templateVariable.AddDependencies(resourceDependencies...)
 				if err := directedAcyclicGraph.AddDependencies(resource.id, resourceDependencies); err != nil {
 					return nil, err
 				}
@@ -362,167 +382,81 @@ func (b *Builder) buildDependencyGraph(
 	return directedAcyclicGraph, nil
 }
 
-// buildInstanceResource builds the instance resource. The instance resource is
-// the representation of the CR that users will create in their cluster to request
-// the creation of the resources defined in the resource graph definition.
-//
-// Since instances are defined using the "SimpleSchema" format, we use a different
-// approach to build the instance resource. We need to:
-func (b *Builder) buildInstanceResource(crd *extv1.CustomResourceDefinition, rgStatus runtime.RawExtension, resources map[string]*Resource) (*Resource, error) {
-	// The instance resource is the resource users will create in their cluster,
-	// to request the creation of the resources defined in the resource graph definition.
-	//
-	// The instance resource is a Kubernetes resource, differently from typical
-	// CRDs, it doesn't have an OpenAPI schema. Instead, it has a schema defined
-	// using the "SimpleSchema" format, a new standard we created to simplify
-	// CRD declarations.
-
-	gvk := k8sschema.GroupVersionKind{
-		Group:   crd.Spec.Group,
-		Kind:    crd.Spec.Names.Kind,
-		Version: crd.Spec.Versions[0].Name, // TODO(negz): Validate this version exists ;)
+// buildInstanceResource builds the instance resource from the XR CRD.
+func (b *Builder) buildInstanceResource(
+	xrCRD *extv1.CustomResourceDefinition,
+	rgd *v1beta1.ResourceGraph,
+	resources map[string]*Resource,
+) (*Resource, error) {
+	// Get GVR from the XR CRD
+	gvr := schema.GroupVersionResource{
+		Group:    xrCRD.Spec.Group,
+		Version:  xrCRD.Spec.Versions[0].Name,
+		Resource: xrCRD.Spec.Names.Plural,
 	}
 
-	statusVariables, err := buildStatusSchema(rgStatus, resources)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build OpenAPI schema for instance status: %w", err)
-	}
-
-	// Emulate the CRD
-	instanceSchemaExt := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
-	instanceSchema, err := schema.ConvertJSONSchemaPropsToSpecSchema(instanceSchemaExt)
+	// Get the schema from the CRD
+	instanceSchemaExt := xrCRD.Spec.Versions[0].Schema.OpenAPIV3Schema
+	instanceSchema, err := kroschema.ConvertJSONSchemaPropsToSpecSchema(instanceSchemaExt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert JSON schema to spec schema: %w", err)
 	}
-	emulatedInstance, err := b.resourceEmulator.GenerateDummyCR(gvk, instanceSchema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate dummy CR for instance: %w", err)
-	}
 
-	resourceNames := maps.Keys(resources)
-	env, err := krocel.DefaultEnvironment(krocel.WithResourceIDs(resourceNames))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CEL environment: %w", err)
-	}
-
-	// The instance resource has a set of variables that need to be resolved.
-	instance := &Resource{
-		id:             "instance",
-		gvr:            metadata.GVKtoGVR(gvk),
-		schema:         instanceSchema,
-		crd:            crd,
-		emulatedObject: emulatedInstance,
-	}
-
-	instanceStatusVariables := []*variable.ResourceField{}
-	for _, statusVariable := range statusVariables {
-		// These variables needs to be injected into the status field of the instance.
-		path := "status." + statusVariable.Path
-		statusVariable.Path = path
-
-		instanceDependencies, isStatic, err := extractDependencies(env, statusVariable.Expressions[0], resourceNames)
+	// Parse status CEL expressions if provided
+	statusVariables := []*variable.ResourceField{}
+	if len(rgd.Status.Raw) > 0 {
+		unstructuredStatus := map[string]interface{}{}
+		err := yaml.UnmarshalStrict(rgd.Status.Raw, &unstructuredStatus)
 		if err != nil {
-			return nil, fmt.Errorf("failed to extract dependencies: %w", err)
+			return nil, fmt.Errorf("failed to unmarshal status schema: %w", err)
 		}
-		if isStatic {
-			return nil, fmt.Errorf("instance status field must refer to a resource: %s", statusVariable.Path)
-		}
-		instance.addDependencies(instanceDependencies...)
 
-		instanceStatusVariables = append(instanceStatusVariables, &variable.ResourceField{
-			FieldDescriptor: statusVariable,
-			Kind:            variable.ResourceVariableKindDynamic,
-			Dependencies:    instanceDependencies,
-		})
+		fieldDescriptors, err := parser.ParseSchemalessResource(unstructuredStatus)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract CEL expressions from status: %w", err)
+		}
+
+		resourceNames := maps.Keys(resources)
+		env, err := krocel.DefaultEnvironment(krocel.WithResourceIDs(resourceNames))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create CEL environment: %w", err)
+		}
+
+		for _, fd := range fieldDescriptors {
+			path := "status." + fd.Path
+			fd.Path = path
+
+			instanceDependencies, isStatic, err := extractDependencies(env, fd.Expressions[0], resourceNames)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract dependencies: %w", err)
+			}
+			if isStatic {
+				return nil, fmt.Errorf("instance status field must refer to a resource: %s", fd.Path)
+			}
+
+			statusVariables = append(statusVariables, &variable.ResourceField{
+				FieldDescriptor: fd,
+				Kind:            variable.ResourceVariableKindDynamic,
+				Dependencies:    instanceDependencies,
+			})
+		}
 	}
 
-	instance.variables = instanceStatusVariables
+	instance := &Resource{
+		id:        "instance",
+		gvr:       gvr,
+		schema:    instanceSchema,
+		crd:       xrCRD,
+		variables: statusVariables,
+	}
+
 	return instance, nil
 }
 
-// buildStatusSchema builds the status schema for the instance resource. The
-// status schema is inferred from the CEL expressions in the status field.
-func buildStatusSchema(
-	rgStatus runtime.RawExtension,
-	resources map[string]*Resource,
-) (
-	[]variable.FieldDescriptor,
-	error,
-) {
-	// The instance resource has a schema defined using the "SimpleSchema" format.
-	unstructuredStatus := map[string]interface{}{}
-	err := yaml.UnmarshalStrict(rgStatus.Raw, &unstructuredStatus)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal status schema: %w", err)
-	}
-
-	// different from the instance spec, the status schema is inferred from the
-	// CEL expressions in the status field.
-	fieldDescriptors, err := parser.ParseSchemalessResource(unstructuredStatus)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract CEL expressions from status: %w", err)
-	}
-
-	return fieldDescriptors, nil
-}
-
-// validateCELExpressionContext validates the given CEL expression in the context
-// of the resources defined in the resource graph definition.
-func validateCELExpressionContext(env *cel.Env, expression string, resources []string) error {
-	inspector := ast.NewInspectorWithEnv(env, resources, nil)
-
-	// The CEL expression is valid if it refers to the resources defined in the
-	// resource graph definition.
-	inspectionResult, err := inspector.Inspect(expression)
-	if err != nil {
-		return fmt.Errorf("failed to inspect expression: %w", err)
-	}
-	// make sure that the expression refers to the resources defined in the resource graph definition.
-	for _, resource := range inspectionResult.ResourceDependencies {
-		if !slices.Contains(resources, resource.ID) {
-			return fmt.Errorf("expression refers to unknown resource: %s", resource.ID)
-		}
-	}
-	return nil
-}
-
-// dryRunExpression executes the given CEL expression in the context of a set
-// of emulated resources. We could've called this function evaluateExpression
-// but we chose to call it dryRunExpression to indicate that we are not actually
-// used for anything other than validating the expression and inspecting it
-func dryRunExpression(env *cel.Env, expression string, resources map[string]*Resource) (ref.Val, error) {
-	ast, issues := env.Compile(expression)
-	if issues != nil && issues.Err() != nil {
-		return nil, fmt.Errorf("failed to compile expression: %w", issues.Err())
-	}
-
-	// TODO(a-hilaly): thinking about a creating a library to hide this...
-	program, err := env.Program(ast)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create program: %w", err)
-	}
-
-	context := map[string]interface{}{}
-	for resourceName, resource := range resources {
-		context[resourceName] = resource.emulatedObject.Object
-	}
-
-	output, _, err := program.Eval(context)
-	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate expression: %w", err)
-	}
-	return output, nil
-}
-
 // extractDependencies extracts the dependencies from the given CEL expression.
-// It returns a list of dependencies and a boolea indicating if the expression
-// is static or not.
 func extractDependencies(env *cel.Env, expression string, resourceNames []string) ([]string, bool, error) {
-	// We also want to allow users to refer to the instance spec in their expressions.
-	inspector := ast.NewInspectorWithEnv(env, resourceNames, nil)
+	inspector := ast.NewInspectorWithEnv(env, resourceNames)
 
-	// The CEL expression is valid if it refers to the resources defined in the
-	// resource graph definition.
 	inspectionResult, err := inspector.Inspect(expression)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to inspect expression: %w", err)
@@ -545,130 +479,253 @@ func extractDependencies(env *cel.Env, expression string, resourceNames []string
 	return dependencies, isStatic, nil
 }
 
-// validateResourceCELExpressions tries to validate the CEL expressions in the
-// resources against the resources defined in the resource graph definition.
-//
-// In this process, we pin a resource and evaluate the CEL expressions in the
-// context of emulated resources. Meaning that given 3 resources A, B, and C,
-// we evalute A's CEL expressions against 2 emulated resources B and C. Then
-// we evaluate B's CEL expressions against 2 emulated resources A and C, and so
-// on.
-func validateResourceCELExpressions(resources map[string]*Resource, instance *Resource) error {
-	resourceNames := maps.Keys(resources)
-	// We also want to allow users to refer to the instance spec in their expressions.
-	resourceNames = append(resourceNames, "schema")
-	conditionFieldNames := []string{"schema"}
+// resolveSchemaAndTypeName resolves schema and type name for a field path
+func resolveSchemaAndTypeName(segments []fieldpath.Segment, rootSchema *spec.Schema, resourceID string) (*spec.Schema, string, error) {
+	typeName := krocel.TypeNamePrefix + resourceID
+	currentSchema := rootSchema
 
-	env, err := krocel.DefaultEnvironment(krocel.WithResourceIDs(resourceNames))
-	if err != nil {
-		return fmt.Errorf("failed to create CEL environment: %w", err)
-	}
-	instanceEmulatedCopy := instance.emulatedObject.DeepCopy()
-	if instanceEmulatedCopy != nil && instanceEmulatedCopy.Object != nil {
-		delete(instanceEmulatedCopy.Object, "apiVersion")
-		delete(instanceEmulatedCopy.Object, "kind")
-		delete(instanceEmulatedCopy.Object, "status")
-	}
-
-	for _, resource := range resources {
-		for _, resourceVariable := range resource.variables {
-			for _, expression := range resourceVariable.Expressions {
-				err := validateCELExpressionContext(env, expression, resourceNames)
-				if err != nil {
-					return fmt.Errorf("failed to validate expression context: '%s' %w", expression, err)
-				}
-
-				// create context
-				context := map[string]*Resource{}
-				for resourceName, contextResource := range resources {
-					// exclude the resource we are validating
-					if resourceName != resource.id {
-						context[resourceName] = contextResource
-					}
-				}
-				// add instance spec to the context
-				context["schema"] = &Resource{
-					emulatedObject: &unstructured.Unstructured{
-						Object: instanceEmulatedCopy.Object,
-					},
-				}
-
-				_, err = dryRunExpression(env, expression, context)
-				if err != nil {
-					return fmt.Errorf("failed to dry-run expression %s: %w", expression, err)
-				}
+	for _, seg := range segments {
+		if seg.Name != "" {
+			typeName = typeName + "." + seg.Name
+			currentSchema = lookupSchemaAtPath(currentSchema, seg.Name)
+			if currentSchema == nil {
+				return nil, "", fmt.Errorf("field %q not found in schema", seg.Name)
 			}
+		}
 
-			// validate readyWhen Expressions for resource
-			// Only accepting expressions accessing the status and spec for now
-			// and need to evaluate to a boolean type
-			//
-			// TODO(michaelhtm) It shares some of the logic with the loop from above..maybe
-			// we can refactor them or put it in one function.
-			// I would also suggest separating the dryRuns of readyWhenExpressions
-			// and the resourceExpressions.
-			for _, readyWhenExpression := range resource.readyWhenExpressions {
-				fieldEnv, err := krocel.DefaultEnvironment(krocel.WithResourceIDs([]string{resource.id}))
-				if err != nil {
-					return fmt.Errorf("failed to create CEL environment: %w", err)
-				}
-
-				err = validateCELExpressionContext(fieldEnv, readyWhenExpression, []string{resource.id})
-				if err != nil {
-					return fmt.Errorf("failed to validate expression context: '%s' %w", readyWhenExpression, err)
-				}
-				// create context
-				// add resource fields to the context
-				resourceEmulatedCopy := resource.emulatedObject.DeepCopy()
-				if resourceEmulatedCopy != nil && resourceEmulatedCopy.Object != nil {
-					delete(resourceEmulatedCopy.Object, "apiVersion")
-					delete(resourceEmulatedCopy.Object, "kind")
-				}
-				context := map[string]*Resource{}
-				context[resource.id] = &Resource{
-					emulatedObject: resourceEmulatedCopy,
-				}
-				output, err := dryRunExpression(fieldEnv, readyWhenExpression, context)
-
-				if err != nil {
-					return fmt.Errorf("failed to dry-run expression %s: %w", readyWhenExpression, err)
-				}
-				if !krocel.IsBoolType(output) {
-					return fmt.Errorf("output of readyWhen expression %s can only be of type bool", readyWhenExpression)
-				}
-			}
-
-			for _, includeWhenExpression := range resource.includeWhenExpressions {
-				instanceEnv, err := krocel.DefaultEnvironment(krocel.WithResourceIDs(resourceNames))
-				if err != nil {
-					return fmt.Errorf("failed to create CEL environment: %w", err)
-				}
-
-				err = validateCELExpressionContext(instanceEnv, includeWhenExpression, conditionFieldNames)
-				if err != nil {
-					return fmt.Errorf("failed to validate expression context: '%s' %w", includeWhenExpression, err)
-				}
-				// create context
-				context := map[string]*Resource{}
-				// for now we will only support the instance context for condition expressions.
-				// With this decision we will decide in creation time, and update time
-				// If we'll be creating resources or not
-				context["schema"] = &Resource{
-					emulatedObject: &unstructured.Unstructured{
-						Object: instanceEmulatedCopy.Object,
-					},
-				}
-
-				output, err := dryRunExpression(instanceEnv, includeWhenExpression, context)
-				if err != nil {
-					return fmt.Errorf("failed to dry-run expression %s: %w", includeWhenExpression, err)
-				}
-				if !krocel.IsBoolType(output) {
-					return fmt.Errorf("output of condition expression %s can only be of type bool", includeWhenExpression)
-				}
+		if seg.Index != -1 {
+			if currentSchema.Items != nil && currentSchema.Items.Schema != nil {
+				currentSchema = currentSchema.Items.Schema
+				typeName = typeName + ".@idx"
+			} else {
+				return nil, "", fmt.Errorf("field is not an array")
 			}
 		}
 	}
 
+	return currentSchema, typeName, nil
+}
+
+func setExpectedTypeOnDescriptor(descriptor *variable.FieldDescriptor, rootSchema *spec.Schema, resourceID string) {
+	if !descriptor.StandaloneExpression {
+		descriptor.ExpectedType = cel.StringType
+		return
+	}
+
+	segments, err := fieldpath.Parse(descriptor.Path)
+	if err != nil {
+		descriptor.ExpectedType = cel.DynType
+		return
+	}
+
+	schema, typeName, err := resolveSchemaAndTypeName(segments, rootSchema, resourceID)
+	if err != nil {
+		descriptor.ExpectedType = cel.DynType
+		return
+	}
+
+	descriptor.ExpectedType = getCelTypeFromSchema(schema, typeName)
+}
+
+func getCelTypeFromSchema(schema *spec.Schema, typeName string) *cel.Type {
+	if schema == nil {
+		return cel.DynType
+	}
+
+	declType := krocel.SchemaDeclTypeWithMetadata(&openapi.Schema{Schema: schema}, false)
+	if declType == nil {
+		return cel.DynType
+	}
+
+	declType = declType.MaybeAssignTypeName(typeName)
+	return declType.CelType()
+}
+
+func lookupSchemaAtPath(schema *spec.Schema, path string) *spec.Schema {
+	if path == "" {
+		return schema
+	}
+
+	parts := strings.Split(path, ".")
+	current := schema
+
+	for _, part := range parts {
+		if current == nil {
+			return nil
+		}
+
+		if prop, ok := current.Properties[part]; ok {
+			current = &prop
+			continue
+		}
+
+		if current.Items != nil && current.Items.Schema != nil {
+			current = current.Items.Schema
+			if prop, ok := current.Properties[part]; ok {
+				current = &prop
+				continue
+			}
+		}
+
+		return nil
+	}
+
+	return current
+}
+
+// validateNode validates all CEL expressions for a single resource node
+func validateNode(resource *Resource, templatesEnv, schemaEnv *cel.Env, resourceSchema *spec.Schema, typeProvider *krocel.DeclTypeProvider) error {
+	if err := validateTemplateExpressions(templatesEnv, resource, typeProvider); err != nil {
+		return err
+	}
+
+	if len(resource.includeWhenExpressions) > 0 {
+		if err := validateIncludeWhenExpressions(schemaEnv, resource); err != nil {
+			return err
+		}
+	}
+
+	if len(resource.readyWhenExpressions) > 0 {
+		resourceEnv, err := krocel.TypedEnvironment(map[string]*spec.Schema{resource.id: resourceSchema})
+		if err != nil {
+			return fmt.Errorf("failed to create CEL environment for readyWhen validation: %w", err)
+		}
+
+		if err := validateReadyWhenExpressions(resourceEnv, resource); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+func validateTemplateExpressions(env *cel.Env, resource *Resource, typeProvider *krocel.DeclTypeProvider) error {
+	for _, templateVariable := range resource.variables {
+		if len(templateVariable.Expressions) == 1 {
+			expression := templateVariable.Expressions[0]
+
+			checkedAST, err := parseAndCheckCELExpression(env, expression)
+			if err != nil {
+				return fmt.Errorf("failed to type-check template expression %q at path %q: %w", expression, templateVariable.Path, err)
+			}
+			outputType := checkedAST.OutputType()
+			if err := validateExpressionType(outputType, templateVariable.ExpectedType, expression, resource.id, templateVariable.Path, typeProvider); err != nil {
+				return err
+			}
+		} else if len(templateVariable.Expressions) > 1 {
+			for _, expression := range templateVariable.Expressions {
+				checkedAST, err := parseAndCheckCELExpression(env, expression)
+				if err != nil {
+					return fmt.Errorf("failed to type-check template expression %q at path %q: %w", expression, templateVariable.Path, err)
+				}
+
+				outputType := checkedAST.OutputType()
+				if err := validateExpressionType(outputType, templateVariable.ExpectedType, expression, resource.id, templateVariable.Path, typeProvider); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateExpressionType(outputType, expectedType *cel.Type, expression, resourceID, path string, typeProvider *krocel.DeclTypeProvider) error {
+	if expectedType.IsAssignableType(outputType) {
+		return nil
+	}
+
+	compatible, compatErr := krocel.AreTypesStructurallyCompatible(outputType, expectedType, typeProvider)
+	if compatible {
+		return nil
+	}
+	if compatErr != nil {
+		return fmt.Errorf(
+			"type mismatch in resource %q at path %q: expression %q returns type %q but expected %q: %w",
+			resourceID, path, expression, outputType.String(), expectedType.String(), compatErr,
+		)
+	}
+
+	return fmt.Errorf(
+		"type mismatch in resource %q at path %q: expression %q returns type %q but expected %q",
+		resourceID, path, expression, outputType.String(), expectedType.String(),
+	)
+}
+
+func parseAndCheckCELExpression(env *cel.Env, expression string) (*cel.Ast, error) {
+	parsedAST, issues := env.Parse(expression)
+	if issues != nil && issues.Err() != nil {
+		return nil, issues.Err()
+	}
+
+	checkedAST, issues := env.Check(parsedAST)
+	if issues != nil && issues.Err() != nil {
+		return nil, issues.Err()
+	}
+
+	return checkedAST, nil
+}
+
+func validateConditionExpression(env *cel.Env, expression, conditionType, resourceID string) error {
+	checkedAST, err := parseAndCheckCELExpression(env, expression)
+	if err != nil {
+		return fmt.Errorf("failed to type-check %s expression %q in resource %q: %w", conditionType, expression, resourceID, err)
+	}
+
+	outputType := checkedAST.OutputType()
+	if !krocel.IsBoolOrOptionalBool(outputType) {
+		return fmt.Errorf(
+			"%s expression %q in resource %q must return bool or optional_type(bool), but returns %q",
+			conditionType, expression, resourceID, outputType.String(),
+		)
+	}
+
+	return nil
+}
+
+func validateIncludeWhenExpressions(env *cel.Env, resource *Resource) error {
+	for _, expression := range resource.includeWhenExpressions {
+		if err := validateConditionExpression(env, expression, "includeWhen", resource.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateReadyWhenExpressions(env *cel.Env, resource *Resource) error {
+	for _, expression := range resource.readyWhenExpressions {
+		if err := validateConditionExpression(env, expression, "readyWhen", resource.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func getSchemaWithoutStatus(crd *extv1.CustomResourceDefinition) (*spec.Schema, error) {
+	crdCopy := crd.DeepCopy()
+
+	if len(crdCopy.Spec.Versions) < 1 {
+		return nil, fmt.Errorf("expected CRD to have at least one version")
+	}
+	if crdCopy.Spec.Versions[0].Schema == nil {
+		return nil, fmt.Errorf("expected CRD version to have schema defined")
+	}
+
+	openAPISchema := crdCopy.Spec.Versions[0].Schema.OpenAPIV3Schema
+
+	if openAPISchema.Properties == nil {
+		openAPISchema.Properties = make(map[string]extv1.JSONSchemaProps)
+	}
+
+	delete(openAPISchema.Properties, "status")
+
+	specSchema, err := kroschema.ConvertJSONSchemaPropsToSpecSchema(openAPISchema)
+	if err != nil {
+		return nil, err
+	}
+
+	if specSchema.Properties == nil {
+		specSchema.Properties = make(map[string]spec.Schema)
+	}
+	specSchema.Properties["metadata"] = kroschema.ObjectMetaSchema
+	return specSchema, nil
 }

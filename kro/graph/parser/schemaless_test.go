@@ -1,15 +1,16 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package parser
 
@@ -30,7 +31,6 @@ func areEqualExpressionFields(a, b []variable.FieldDescriptor) bool {
 
 	for i := range a {
 		if !equalStrings(a[i].Expressions, b[i].Expressions) ||
-			!areEqualSlices(a[i].ExpectedTypes, b[i].ExpectedTypes) ||
 			a[i].Path != b[i].Path ||
 			a[i].StandaloneExpression != b[i].StandaloneExpression {
 			return false
@@ -85,7 +85,6 @@ func TestParseSchemalessResource(t *testing.T) {
 			want: []variable.FieldDescriptor{
 				{
 					Expressions:          []string{"resource.value"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "field",
 					StandaloneExpression: true,
 				},
@@ -102,7 +101,6 @@ func TestParseSchemalessResource(t *testing.T) {
 			want: []variable.FieldDescriptor{
 				{
 					Expressions:          []string{"nested.value"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "outer.inner",
 					StandaloneExpression: true,
 				},
@@ -120,13 +118,11 @@ func TestParseSchemalessResource(t *testing.T) {
 			want: []variable.FieldDescriptor{
 				{
 					Expressions:          []string{"array[0]"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "array[0]",
 					StandaloneExpression: true,
 				},
 				{
 					Expressions:          []string{"array[1]"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "array[1]",
 					StandaloneExpression: true,
 				},
@@ -140,9 +136,8 @@ func TestParseSchemalessResource(t *testing.T) {
 			},
 			want: []variable.FieldDescriptor{
 				{
-					Expressions:   []string{"expr1", "expr2"},
-					ExpectedTypes: []string{"any"},
-					Path:          "field",
+					Expressions: []string{"expr1", "expr2"},
+					Path:        "field",
 				},
 			},
 			wantErr: false,
@@ -163,13 +158,11 @@ func TestParseSchemalessResource(t *testing.T) {
 			want: []variable.FieldDescriptor{
 				{
 					Expressions:          []string{"string.value"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "string",
 					StandaloneExpression: true,
 				},
 				{
 					Expressions:          []string{"array.value"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "nested.array[0]",
 					StandaloneExpression: true,
 				},
@@ -227,7 +220,6 @@ func TestParseSchemalessResourceEdgeCases(t *testing.T) {
 			want: []variable.FieldDescriptor{
 				{
 					Expressions:          []string{"deeply.nested.value"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "level1.level2.level3.level4",
 					StandaloneExpression: true,
 				},
@@ -249,13 +241,11 @@ func TestParseSchemalessResourceEdgeCases(t *testing.T) {
 			want: []variable.FieldDescriptor{
 				{
 					Expressions:          []string{"expr1"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "array[0]",
 					StandaloneExpression: true,
 				},
 				{
 					Expressions:          []string{"expr2"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "array[3].nested",
 					StandaloneExpression: true,
 				},
@@ -271,13 +261,11 @@ func TestParseSchemalessResourceEdgeCases(t *testing.T) {
 			want: []variable.FieldDescriptor{
 				{
 					Expressions:          []string{""},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "empty1",
 					StandaloneExpression: true,
 				},
 				{
 					Expressions:          []string{"    "},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "empty2",
 					StandaloneExpression: true,
 				},
@@ -295,7 +283,7 @@ func TestParseSchemalessResourceEdgeCases(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Complex strcture with various expressions combinations",
+			name: "Complex structure with various expressions combinations",
 			resource: map[string]interface{}{
 				"string": "${string.value}",
 				"number": 42,
@@ -321,36 +309,30 @@ func TestParseSchemalessResourceEdgeCases(t *testing.T) {
 			want: []variable.FieldDescriptor{
 				{
 					Expressions:          []string{"string.value"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "string",
 					StandaloneExpression: true,
 				},
 				{
 					Expressions:          []string{"array.value"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "nested.array[0]",
 					StandaloneExpression: true,
 				},
 				{
-					Expressions:   []string{"expr1", "expr2"},
-					ExpectedTypes: []string{"any"},
-					Path:          "complex.field",
+					Expressions: []string{"expr1", "expr2"},
+					Path:        "complex.field",
 				},
 				{
 					Expressions:          []string{"nested.value"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "complex.nested.inner",
 					StandaloneExpression: true,
 				},
 				{
 					Expressions:          []string{"expr4"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "complex.array[1]",
 					StandaloneExpression: true,
 				},
 				{
 					Expressions:          []string{"expr5"},
-					ExpectedTypes:        []string{"any"},
 					Path:                 "complex.array[2]",
 					StandaloneExpression: true,
 				},

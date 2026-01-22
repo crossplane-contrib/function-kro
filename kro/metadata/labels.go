@@ -1,15 +1,16 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package metadata
 
@@ -17,46 +18,72 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/kro-run/kro/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
-	// LabelKro is the label key used to identify Kro owned resources.
-	LabelKroPrefix = v1alpha1.KroDomainName + "/"
+	// KRODomainName is the domain name for KRO resources
+	KRODomainName = "kro.run"
+
+	// LabelKROPrefix is the label key prefix used to identify KRO owned resources.
+	LabelKROPrefix = KRODomainName + "/"
 )
 
 const (
-	NodeIDLabel = LabelKroPrefix + "node-id"
+	NodeIDLabel = LabelKROPrefix + "node-id"
 
-	OwnedLabel           = LabelKroPrefix + "owned"
-	KroVersionLabel      = LabelKroPrefix + "kro-version"
-	ControllerPodIDLabel = LabelKroPrefix + "controller-pod-id"
+	OwnedLabel      = LabelKROPrefix + "owned"
+	KROVersionLabel = LabelKROPrefix + "kro-version"
 
-	InstanceIDLabel        = LabelKroPrefix + "instance-id"
-	InstanceLabel          = LabelKroPrefix + "instance-name"
-	InstanceNamespaceLabel = LabelKroPrefix + "instance-namespace"
+	ManagedByLabelKey = "app.kubernetes.io/managed-by"
+	ManagedByKROValue = "kro"
 
-	ResourceGraphDefinitionIDLabel        = LabelKroPrefix + "resource-graph-definition-id"
-	ResourceGraphDefinitionNameLabel      = LabelKroPrefix + "resource-graph-definition-name"
-	ResourceGraphDefinitionNamespaceLabel = LabelKroPrefix + "resource-graph-definition-namespace"
-	ResourceGraphDefinitionVersionLabel   = LabelKroPrefix + "resource-graph-definition-version"
+	InstanceIDLabel        = LabelKROPrefix + "instance-id"
+	InstanceLabel          = LabelKROPrefix + "instance-name"
+	InstanceNamespaceLabel = LabelKROPrefix + "instance-namespace"
+
+	ResourceGraphDefinitionIDLabel        = LabelKROPrefix + "resource-graph-definition-id"
+	ResourceGraphDefinitionNameLabel      = LabelKROPrefix + "resource-graph-definition-name"
+	ResourceGraphDefinitionNamespaceLabel = LabelKROPrefix + "resource-graph-definition-namespace"
+	ResourceGraphDefinitionVersionLabel   = LabelKROPrefix + "resource-graph-definition-version"
 )
 
-// IsKroOwned returns true if the resource is owned by Kro.
-func IsKroOwned(meta metav1.ObjectMeta) bool {
-	v, ok := meta.Labels[OwnedLabel]
+// IsKROOwned returns true if the resource is owned by KRO.
+func IsKROOwned(meta metav1.Object) bool {
+	v, ok := meta.GetLabels()[OwnedLabel]
+	if !ok {
+		return meta.GetLabels()[ManagedByLabelKey] == ManagedByKROValue
+	}
 	return ok && booleanFromString(v)
 }
 
-// SetKroOwned sets the OwnedLabel to true on the resource.
-func SetKroOwned(meta metav1.ObjectMeta) {
-	setLabel(&meta, OwnedLabel, stringFromBoolean(true))
-}
+// CompareRGDOwnership compares RGD ownership labels between two resources.
+// Returns three booleans:
+//   - kroOwned: whether the existing resource is owned by KRO
+//   - nameMatch: whether both resources have the same RGD name
+//   - idMatch: whether both resources have the same RGD ID
+//
+// This allows callers to distinguish between different ownership scenarios:
+//   - kroOwned=true, nameMatch=true, idMatch=true: same RGD, normal update
+//   - kroOwned=true, nameMatch=true, idMatch=false: same RGD name, different ID (adoption)
+//   - kroOwned=true, nameMatch=false: different RGD (conflict)
+//   - kroOwned=false: not owned by KRO (conflict)
+func CompareRGDOwnership(existing, desired metav1.ObjectMeta) (kroOwned, nameMatch, idMatch bool) {
+	kroOwned = IsKROOwned(&existing)
+	if !kroOwned {
+		return false, false, false
+	}
 
-// SetKroUnowned sets the OwnedLabel to false on the resource.
-func SetKroUnowned(meta metav1.ObjectMeta) {
-	setLabel(&meta, OwnedLabel, stringFromBoolean(false))
+	existingOwnerName := existing.Labels[ResourceGraphDefinitionNameLabel]
+	existingOwnerID := existing.Labels[ResourceGraphDefinitionIDLabel]
+
+	desiredOwnerName := desired.Labels[ResourceGraphDefinitionNameLabel]
+	desiredOwnerID := desired.Labels[ResourceGraphDefinitionIDLabel]
+
+	nameMatch = existingOwnerName == desiredOwnerName
+	idMatch = existingOwnerID == desiredOwnerID
+
+	return kroOwned, nameMatch, idMatch
 }
 
 var (
@@ -115,9 +142,8 @@ func (gl GenericLabeler) Copy() map[string]string {
 // ResourceGraphDefinitionLabel and ResourceGraphDefinitionIDLabel labels on a resource.
 func NewResourceGraphDefinitionLabeler(rgMeta metav1.Object) GenericLabeler {
 	return map[string]string{
-		ResourceGraphDefinitionIDLabel:        string(rgMeta.GetUID()),
-		ResourceGraphDefinitionNameLabel:      rgMeta.GetName(),
-		ResourceGraphDefinitionNamespaceLabel: rgMeta.GetNamespace(),
+		ResourceGraphDefinitionIDLabel:   string(rgMeta.GetUID()),
+		ResourceGraphDefinitionNameLabel: rgMeta.GetName(),
 	}
 }
 
@@ -132,31 +158,22 @@ func NewInstanceLabeler(instanceMeta metav1.Object) GenericLabeler {
 	}
 }
 
-// NewKroMetaLabeler returns a new labeler that sets the OwnedLabel,
-// KroVersion, and ControllerPodID labels on a resource.
-func NewKroMetaLabeler(
-	kroVersion string,
-	controllerPodID string,
-) GenericLabeler {
+// NewKROMetaLabeler returns a new labeler that sets the OwnedLabel,
+// KROVersion, and ManagedBy labels on a resource.
+func NewKROMetaLabeler() GenericLabeler {
 	return map[string]string{
-		OwnedLabel:           "true",
-		KroVersionLabel:      kroVersion,
-		ControllerPodIDLabel: controllerPodID,
+		OwnedLabel:        "true",
+		KROVersionLabel:   "function-kro",
+		ManagedByLabelKey: ManagedByKROValue,
 	}
 }
 
+
 func booleanFromString(s string) bool {
-	// for the sake of simplicy we'll avoid doing any kind
+	// for the sake of simplicity we'll avoid doing any kind
 	// of parsing here. Since those labels are set by the controller
 	// it self. We'll expect the same values back.
 	return s == "true"
-}
-
-func stringFromBoolean(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }
 
 // Helper function to set a label

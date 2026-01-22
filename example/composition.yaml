@@ -24,46 +24,56 @@ spec:
       resources:
       - id: vpc
         template:
-          apiVersion: ec2.aws.upbound.io/v1beta1
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
           kind: VPC
+          metadata: {}
           spec:
             forProvider:
+              region: ${schema.spec.region}
               cidrBlock: 192.168.0.0/16
               enableDnsHostnames: false
               enableDnsSupport: true
       - id: subnetAZA
         template:
-          apiVersion: ec2.aws.upbound.io/v1beta1
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
           kind: Subnet
+          metadata: {}
           spec:
             forProvider:
+              region: ${schema.spec.region}
               availabilityZone: us-west-2a
               cidrBlock: 192.168.0.0/18
               vpcId: ${vpc.status.atProvider.id}
       - id: subnetAZB
         template:
-          apiVersion: ec2.aws.upbound.io/v1beta1
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
           kind: Subnet
+          metadata: {}
           spec:
             forProvider:
+              region: ${schema.spec.region}
               availabilityZone: us-west-2b
               cidrBlock: 192.168.64.0/18
               vpcId: ${vpc.status.atProvider.id}
       - id: subnetAZC
         template:
-          apiVersion: ec2.aws.upbound.io/v1beta1
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
           kind: Subnet
+          metadata: {}
           spec:
             forProvider:
-              availabilityZone: us-west-2b
+              region: ${schema.spec.region}
+              availabilityZone: us-west-2c
               cidrBlock: 192.168.128.0/18
               vpcId: ${vpc.status.atProvider.id}
       - id: securityGroup
         template:
-          apiVersion: ec2.aws.upbound.io/v1beta1
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
           kind: SecurityGroup
+          metadata: {}
           spec:
             forProvider:
               name: my-sg-${schema.spec.name}
+              region: ${schema.spec.region}
               description: something something
               vpcId: ${vpc.status.atProvider.id}

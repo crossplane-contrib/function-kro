@@ -1,15 +1,16 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package resolver
 
@@ -95,14 +96,15 @@ func (r *Resolver) resolveField(field variable.FieldDescriptor) ResolutionResult
 
 	value, err := r.getValueFromPath(field.Path)
 	if err != nil {
-		// Not sure if these kind of errors should be fatal, these paths are produced
-		// by the parser, so they should be valid. Maybe we should log them instead....
+		// Not sure if these kinds of errors should be fatal, these paths are produced
+		// by the parser, so they should be valid.
+		// Maybe we should log them instead…
 		result.Error = fmt.Errorf("error getting value: %v", err)
 		return result
 	}
 
 	if field.StandaloneExpression {
-		resolvedValue, ok := r.data[strings.Trim(field.Expressions[0], "${}")]
+		resolvedValue, ok := r.data[field.Expressions[0]]
 		if !ok {
 			result.Error = fmt.Errorf("no data provided for expression: %s", field.Expressions[0])
 			return result
@@ -123,13 +125,12 @@ func (r *Resolver) resolveField(field variable.FieldDescriptor) ResolutionResult
 
 		replaced := strValue
 		for _, expr := range field.Expressions {
-			key := strings.Trim(expr, "${}")
-			replacement, ok := r.data[key]
+			replacement, ok := r.data[expr]
 			if !ok {
 				result.Error = fmt.Errorf("no data provided for expression: %s", expr)
 				return result
 			}
-			replaced = strings.Replace(replaced, "${"+expr+"}", fmt.Sprintf("%v", replacement), -1)
+			replaced = strings.ReplaceAll(replaced, "${"+expr+"}", fmt.Sprintf("%v", replacement))
 		}
 
 		err = r.setValueAtPath(field.Path, replaced)

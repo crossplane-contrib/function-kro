@@ -1,38 +1,39 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package graph
 
 import (
 	"slices"
 
-	rgschema "github.com/upbound/function-kro/kro/graph/schema"
-	"github.com/upbound/function-kro/kro/graph/variable"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/kube-openapi/pkg/validation/spec"
+
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 // Resource represents a resource in a resource graph definition, it hholds
 // information about the resource, its schema, and its variables.
 //
-// This object can only be created by the GraphBuilder and it should
-// not be created manually. Also this object isn't designed to be
+// This object can only be created by the GraphBuilder, and it should
+// not be created manually. Also, this object isn't designed to be
 // modified after creation.
 type Resource struct {
-	// id is the unique identifier of the resource. It's the name of the
-	// resource in the resource graph definition.
+	// `id` is the unique identifier of the resource.
+	// It's the name of the resource in the resource graph definition.
 	// An id is unique within a resource graph definition, and adheres to the naming
 	// conventions.
 	id string
@@ -46,15 +47,6 @@ type Resource struct {
 	// This will contain all fields (and CEL expressions) as they were in the
 	// original object.
 	originalObject *unstructured.Unstructured
-	// emulatedObject is the object we'll use to emulate the resource during
-	// the graph building process. This object will contain the resolved values
-	// of the CEL expressions.
-	//
-	// NOTE(a-hilaly): Do we need to keep this object? we only need it when
-	// we're building the graph. We can remove it after the graph is built.
-	// Or... maybe we can keep a global cache to reduce the effort of rebuilding
-	// the graph every time.
-	emulatedObject *unstructured.Unstructured
 	// variables is a list of the variables found in the resource (CEL expressions).
 	variables []*variable.ResourceField
 	// dependencies is a list of the resources this resource depends on.
@@ -62,7 +54,7 @@ type Resource struct {
 	// readyWhenExpressions is a list of the expressions that need to be evaluated
 	// before the resource is considered ready.
 	readyWhenExpressions []string
-	// includeWhenExpressions is a list of the expresisons that need to be evaluated
+	// includeWhenExpressions is a list of the expressions that need to be evaluated
 	// to decide whether to create a resource graph definition or not
 	includeWhenExpressions []string
 	// namespaced indicates if the resource is namespaced or cluster-scoped.
@@ -72,6 +64,8 @@ type Resource struct {
 	// order reflects the original order in which the resources were specified,
 	// and lets us keep the client-specified ordering where the dependencies allow.
 	order int
+	// isExternalRef indicates if the resource should only be read and not created/updated
+	isExternalRef bool
 }
 
 // GetDependencies returns the dependencies of the resource.
@@ -113,7 +107,7 @@ func (r *Resource) GetOrder() int {
 	return r.order
 }
 
-// GetGroupVersionKind returns the GVK of the resource.
+// GetGroupVersionResource GetGroupVersionKind returns the GVK of the resource.
 func (r *Resource) GetGroupVersionResource() schema.GroupVersionResource {
 	return r.gvr
 }
@@ -138,11 +132,6 @@ func (r *Resource) GetSchema() *spec.Schema {
 	return r.schema
 }
 
-// GetEmulatedObject returns the emulated object of the resource.
-func (r *Resource) GetEmulatedObject() *unstructured.Unstructured {
-	return r.emulatedObject
-}
-
 // GetReadyWhenExpressions returns the readyWhen expressions of the resource.
 func (r *Resource) GetReadyWhenExpressions() []string {
 	return r.readyWhenExpressions
@@ -153,14 +142,14 @@ func (r *Resource) GetIncludeWhenExpressions() []string {
 	return r.includeWhenExpressions
 }
 
-// GetTopLevelFields returns the top-level fields of the resource.
-func (r *Resource) GetTopLevelFields() []string {
-	return rgschema.GetResourceTopLevelFieldNames(r.schema)
-}
-
 // IsNamespaced returns true if the resource is namespaced.
 func (r *Resource) IsNamespaced() bool {
 	return r.namespaced
+}
+
+// IsExternalRef returns whether the resource is an external reference
+func (r *Resource) IsExternalRef() bool {
+	return r.isExternalRef
 }
 
 // DeepCopy returns a deep copy of the resource.
@@ -176,5 +165,6 @@ func (r *Resource) DeepCopy() *Resource {
 		readyWhenExpressions:   slices.Clone(r.readyWhenExpressions),
 		includeWhenExpressions: slices.Clone(r.includeWhenExpressions),
 		namespaced:             r.namespaced,
+		isExternalRef:          r.isExternalRef,
 	}
 }

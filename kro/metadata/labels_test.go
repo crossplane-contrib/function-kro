@@ -1,15 +1,16 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package metadata
 
@@ -18,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // mockObject is a simple implementation of metav1.Object for testing
@@ -30,19 +32,19 @@ func (m *mockObject) GetObjectMeta() metav1.Object {
 	return m
 }
 
-func TestIsKroOwned(t *testing.T) {
+func TestIsKROOwned(t *testing.T) {
 	cases := []struct {
 		name     string
 		labels   map[string]string
 		expected bool
 	}{
 		{
-			name:     "owned by Kro",
+			name:     "owned by kro",
 			labels:   map[string]string{OwnedLabel: "true"},
 			expected: true,
 		},
 		{
-			name:     "not owned by Kro",
+			name:     "not owned by kro",
 			labels:   map[string]string{OwnedLabel: "false"},
 			expected: false,
 		},
@@ -56,62 +58,96 @@ func TestIsKroOwned(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			meta := metav1.ObjectMeta{Labels: tc.labels}
-			result := IsKroOwned(meta)
+			result := IsKROOwned(&meta)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
 
-func TestSetKroOwned(t *testing.T) {
+func TestCompareRGDOwnership(t *testing.T) {
 	cases := []struct {
-		name          string
-		initialLabels map[string]string
-		expected      map[string]string
+		name              string
+		existingLabels    map[string]string
+		desiredLabels     map[string]string
+		expectedKROOwned  bool
+		expectedNameMatch bool
+		expectedIDMatch   bool
 	}{
 		{
-			name:          "set owned on empty label",
-			initialLabels: map[string]string{},
-			expected:      map[string]string{OwnedLabel: "true"},
+			name: "same RGD - normal update",
+			existingLabels: map[string]string{
+				OwnedLabel:                       "true",
+				ResourceGraphDefinitionNameLabel: "test-rgd",
+				ResourceGraphDefinitionIDLabel:   "test-id",
+			},
+			desiredLabels: map[string]string{
+				OwnedLabel:                       "true",
+				ResourceGraphDefinitionNameLabel: "test-rgd",
+				ResourceGraphDefinitionIDLabel:   "test-id",
+			},
+			expectedKROOwned:  true,
+			expectedNameMatch: true,
+			expectedIDMatch:   true,
 		},
 		{
-			name:          "override existing owned label",
-			initialLabels: map[string]string{OwnedLabel: "false"},
-			expected:      map[string]string{OwnedLabel: "true"},
+			name: "not owned by KRO",
+			existingLabels: map[string]string{
+				ResourceGraphDefinitionNameLabel: "test-rgd",
+				ResourceGraphDefinitionIDLabel:   "test-id",
+			},
+			desiredLabels: map[string]string{
+				OwnedLabel:                       "true",
+				ResourceGraphDefinitionNameLabel: "test-rgd",
+				ResourceGraphDefinitionIDLabel:   "test-id",
+			},
+			expectedKROOwned:  false,
+			expectedNameMatch: false,
+			expectedIDMatch:   false,
+		},
+		{
+			name: "different RGD name - conflict",
+			existingLabels: map[string]string{
+				OwnedLabel:                       "true",
+				ResourceGraphDefinitionNameLabel: "existing-rgd",
+				ResourceGraphDefinitionIDLabel:   "test-id",
+			},
+			desiredLabels: map[string]string{
+				OwnedLabel:                       "true",
+				ResourceGraphDefinitionNameLabel: "new-rgd",
+				ResourceGraphDefinitionIDLabel:   "test-id",
+			},
+			expectedKROOwned:  true,
+			expectedNameMatch: false,
+			expectedIDMatch:   true,
+		},
+		{
+			name: "same RGD name, different ID - adoption",
+			existingLabels: map[string]string{
+				OwnedLabel:                       "true",
+				ResourceGraphDefinitionNameLabel: "test-rgd",
+				ResourceGraphDefinitionIDLabel:   "existing-id",
+			},
+			desiredLabels: map[string]string{
+				OwnedLabel:                       "true",
+				ResourceGraphDefinitionNameLabel: "test-rgd",
+				ResourceGraphDefinitionIDLabel:   "new-id",
+			},
+			expectedKROOwned:  true,
+			expectedNameMatch: true,
+			expectedIDMatch:   false,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			meta := metav1.ObjectMeta{Labels: tc.initialLabels}
-			SetKroOwned(meta)
-			assert.Equal(t, tc.expected, meta.Labels)
-		})
-	}
-}
+			existing := metav1.ObjectMeta{Labels: tc.existingLabels}
+			desired := metav1.ObjectMeta{Labels: tc.desiredLabels}
 
-func TestSetKroUnowned(t *testing.T) {
-	cases := []struct {
-		name          string
-		initialLabels map[string]string
-		expected      map[string]string
-	}{
-		{
-			name:          "set unowned on empty label",
-			initialLabels: map[string]string{},
-			expected:      map[string]string{OwnedLabel: "false"},
-		},
-		{
-			name:          "override existing owned label",
-			initialLabels: map[string]string{OwnedLabel: "true"},
-			expected:      map[string]string{OwnedLabel: "false"},
-		},
-	}
+			kroOwned, nameMatch, idMatch := CompareRGDOwnership(existing, desired)
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			meta := metav1.ObjectMeta{Labels: tc.initialLabels}
-			SetKroUnowned(meta)
-			assert.Equal(t, tc.expected, meta.Labels)
+			assert.Equal(t, tc.expectedKROOwned, kroOwned)
+			assert.Equal(t, tc.expectedNameMatch, nameMatch)
+			assert.Equal(t, tc.expectedIDMatch, idMatch)
 		})
 	}
 }
@@ -119,25 +155,28 @@ func TestSetKroUnowned(t *testing.T) {
 func TestGenericLabeler(t *testing.T) {
 	t.Run("ApplyLabels", func(t *testing.T) {
 		cases := []struct {
-			name     string
-			labeler  GenericLabeler
-			expected map[string]string
+			name         string
+			labeler      GenericLabeler
+			objectLabels map[string]string
+			expected     map[string]string
 		}{
 			{
-				name:     "Apply labels to empty object",
-				labeler:  GenericLabeler{"key1": "value1", "key2": "value2"},
-				expected: map[string]string{"key1": "value1", "key2": "value2"},
+				name:         "Apply labels to empty object",
+				labeler:      GenericLabeler{"key1": "value1", "key2": "value2"},
+				objectLabels: nil,
+				expected:     map[string]string{"key1": "value1", "key2": "value2"},
 			},
 			{
-				name:     "Apply labels to object with existing labels",
-				labeler:  GenericLabeler{"key2": "newvalue2", "key3": "value3"},
-				expected: map[string]string{"key1": "value1", "key2": "newvalue2", "key3": "value3"},
+				name:         "Apply labels to object with existing labels",
+				labeler:      GenericLabeler{"key2": "newvalue2", "key3": "value3"},
+				objectLabels: map[string]string{"key1": "value1", "key2": "value2"},
+				expected:     map[string]string{"key1": "value1", "key2": "newvalue2", "key3": "value3"},
 			},
 		}
 
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				obj := &mockObject{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"key1": "value1"}}}
+				obj := &mockObject{ObjectMeta: metav1.ObjectMeta{Labels: tc.objectLabels}}
 				tc.labeler.ApplyLabels(obj)
 				assert.Equal(t, tc.expected, obj.Labels)
 			})
@@ -179,5 +218,44 @@ func TestGenericLabeler(t *testing.T) {
 				}
 			})
 		}
+	})
+}
+
+func TestNewResourceGraphDefinitionLabeler(t *testing.T) {
+	t.Run("NewResourceGraphDefinitionLabeler", func(t *testing.T) {
+		name := "rgd-name"
+		uid := types.UID("rgd-uid")
+		obj := &mockObject{ObjectMeta: metav1.ObjectMeta{Name: name, UID: uid}}
+		labeler := NewResourceGraphDefinitionLabeler(obj)
+		assert.Equal(t, GenericLabeler{
+			ResourceGraphDefinitionNameLabel: name,
+			ResourceGraphDefinitionIDLabel:   string(uid),
+		}, labeler)
+	})
+}
+
+func TestNewInstanceLabeler(t *testing.T) {
+	t.Run("NewInstanceLabeler", func(t *testing.T) {
+		name := "instance-name"
+		namespace := "instance-namespace"
+		uid := types.UID("instance-uid")
+		obj := &mockObject{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: uid}}
+		labeler := NewInstanceLabeler(obj)
+		assert.Equal(t, GenericLabeler{
+			InstanceLabel:          name,
+			InstanceNamespaceLabel: namespace,
+			InstanceIDLabel:        string(uid),
+		}, labeler)
+	})
+}
+
+func TestNewKROMetaLabeler(t *testing.T) {
+	t.Run("NewKROMetaLabeler", func(t *testing.T) {
+		labeler := NewKROMetaLabeler()
+		assert.Equal(t, GenericLabeler{
+			OwnedLabel:        "true",
+			KROVersionLabel:   "function-kro",
+			ManagedByLabelKey: ManagedByKROValue,
+		}, labeler)
 	})
 }

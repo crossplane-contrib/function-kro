@@ -1,15 +1,16 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package crd
 
@@ -18,22 +19,17 @@ import (
 	"strings"
 
 	"github.com/gobuffalo/flect"
-	"github.com/kro-run/kro/api/v1alpha1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // SynthesizeCRD generates a CustomResourceDefinition for a given API version and kind
 // with the provided spec and status schemas~
-func SynthesizeCRD(group, apiVersion, kind string, spec, status extv1.JSONSchemaProps, statusFieldsOverride bool) *extv1.CustomResourceDefinition {
-	crdGroup := group
-	if crdGroup == "" {
-		crdGroup = v1alpha1.KroDomainName
-	}
-	return newCRD(crdGroup, apiVersion, kind, newCRDSchema(spec, status, statusFieldsOverride))
+func SynthesizeCRD(group, apiVersion, kind string, spec, status extv1.JSONSchemaProps, statusFieldsOverride bool, additionalPrinterColumns []extv1.CustomResourceColumnDefinition) *extv1.CustomResourceDefinition {
+	return newCRD(group, apiVersion, kind, newCRDSchema(spec, status, statusFieldsOverride), additionalPrinterColumns)
 }
 
-func newCRD(group, apiVersion, kind string, schema *extv1.JSONSchemaProps) *extv1.CustomResourceDefinition {
+func newCRD(group, apiVersion, kind string, schema *extv1.JSONSchemaProps, additionalPrinterColumns []extv1.CustomResourceColumnDefinition) *extv1.CustomResourceDefinition {
 	pluralKind := flect.Pluralize(strings.ToLower(kind))
 	return &extv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{
@@ -60,7 +56,7 @@ func newCRD(group, apiVersion, kind string, schema *extv1.JSONSchemaProps) *extv
 					Subresources: &extv1.CustomResourceSubresources{
 						Status: &extv1.CustomResourceSubresourceStatus{},
 					},
-					AdditionalPrinterColumns: defaultAdditionalPrinterColumns,
+					AdditionalPrinterColumns: newCRDAdditionalPrinterColumns(additionalPrinterColumns),
 				},
 			},
 		},
@@ -99,4 +95,12 @@ func newCRDSchema(spec, status extv1.JSONSchemaProps, statusFieldsOverride bool)
 			"status": status,
 		},
 	}
+}
+
+func newCRDAdditionalPrinterColumns(additionalPrinterColumns []extv1.CustomResourceColumnDefinition) []extv1.CustomResourceColumnDefinition {
+	if len(additionalPrinterColumns) == 0 {
+		return defaultAdditionalPrinterColumns
+	}
+
+	return additionalPrinterColumns
 }

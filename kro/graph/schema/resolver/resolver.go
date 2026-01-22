@@ -1,17 +1,18 @@
-// Copyright 2025 The Kube Resource Orchestrator Authors.
+// Copyright 2025 The Kubernetes Authors.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"). You may
-// not use this file except in compliance with the License. A copy of the
-// License is located at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//	http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// or in the "license" file accompanying this file. This file is distributed
-// on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-// express or implied. See the License for the specific language governing
-// permissions and limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-package schema
+package resolver
 
 import (
 	"sync"
@@ -26,7 +27,9 @@ import (
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )
 
-// NewCombinedResolver creates a new schema resolver that can resolve both core and client types.
+// NewCombinedResolver creates a new schema resolver that can resolve both core
+// and CRD types. This version is adapted for Crossplane functions which receive
+// CRDs directly rather than using API server discovery.
 func NewCombinedResolver(crds ...*extv1.CustomResourceDefinition) (resolver.SchemaResolver, error) {
 	// CoreResolver is a resolver that uses the OpenAPI definitions to resolve
 	// core types. It is used to resolve types that are known at compile time.
@@ -49,14 +52,16 @@ func NewCRDSchemaResolver(crds ...*extv1.CustomResourceDefinition) (*CRDSchemaRe
 
 	for _, crd := range crds {
 		for _, v := range crd.Spec.Versions {
+			if v.Schema == nil || v.Schema.OpenAPIV3Schema == nil {
+				continue
+			}
+
 			// Derived from https://github.com/kubernetes/apiextensions-apiserver/blob/v0.32.1/pkg/controller/openapi/builder/builder.go#L112-L116
 			internal := &apiextensions.CustomResourceValidation{}
 			if err := extv1.Convert_v1_CustomResourceValidation_To_apiextensions_CustomResourceValidation(v.Schema, internal, nil); err != nil {
 				continue
 			}
-			// TODO(negz): Should we validate the schema before passing it to
-			// NewStructural? Is it safe to assume that they're valid because we
-			// read them from the API server?
+
 			ss, err := structuralschema.NewStructural(internal.OpenAPIV3Schema)
 			if err != nil {
 				continue

@@ -99,6 +99,7 @@ func TestRunFunction(t *testing.T) {
 							"template": {
 								"apiVersion": "s3.aws.upbound.io/v1beta1",
 								"kind": "Bucket",
+								"metadata": {},
 								"spec": {
 									"forProvider": {
 										"region": "us-west-2"
@@ -253,6 +254,7 @@ func TestRunFunction(t *testing.T) {
 								Resource: resource.MustStructJSON(`{
 									"apiVersion": "s3.aws.upbound.io/v1beta1",
 									"kind": "Bucket",
+									"metadata": {},
 									"spec": {
 										"forProvider": {
 											"region": "us-west-2"
@@ -279,6 +281,7 @@ func TestRunFunction(t *testing.T) {
 							"template": {
 								"apiVersion": "s3.aws.upbound.io/v1beta1",
 								"kind": "Bucket",
+								"metadata": {},
 								"spec": {
 									"forProvider": {
 										"region": "us-west-2"
@@ -453,6 +456,7 @@ func TestRunFunction(t *testing.T) {
 								Resource: resource.MustStructJSON(`{
 									"apiVersion": "s3.aws.upbound.io/v1beta1",
 									"kind": "Bucket",
+									"metadata": {},
 									"spec": {
 										"forProvider": {
 											"region": "us-west-2"
