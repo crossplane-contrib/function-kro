@@ -15,6 +15,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"k8s.io/apiextensions-apiserver/pkg/generated/openapi"
@@ -55,4 +56,28 @@ func getObjectMetaSchema() (spec.Schema, error) {
 		return spec.Schema{}, fmt.Errorf("failed to populate refs for ObjectMeta: %w", err)
 	}
 	return *populatedSchema, nil
+}
+
+// DeepCopySchema creates a deep copy of a spec.Schema.
+// This is useful when you need to modify a schema without affecting the original.
+func DeepCopySchema(schema *spec.Schema) *spec.Schema {
+	if schema == nil {
+		return nil
+	}
+
+	// Use JSON round-trip for deep copy since spec.Schema is a complex struct
+	// with many nested pointers and maps.
+	data, err := json.Marshal(schema)
+	if err != nil {
+		// This should never happen with a valid schema
+		return nil
+	}
+
+	copy := &spec.Schema{}
+	if err := json.Unmarshal(data, copy); err != nil {
+		// This should never happen if marshaling succeeded
+		return nil
+	}
+
+	return copy
 }

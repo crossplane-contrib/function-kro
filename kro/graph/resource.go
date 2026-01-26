@@ -17,7 +17,6 @@ package graph
 import (
 	"slices"
 
-	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/kube-openapi/pkg/validation/spec"
@@ -25,7 +24,7 @@ import (
 	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
-// Resource represents a resource in a resource graph definition, it hholds
+// Resource represents a resource in a resource graph definition, it holds
 // information about the resource, its schema, and its variables.
 //
 // This object can only be created by the GraphBuilder, and it should
@@ -37,12 +36,10 @@ type Resource struct {
 	// An id is unique within a resource graph definition, and adheres to the naming
 	// conventions.
 	id string
-	// GroupVersionKind is the GVK of the resource.
+	// GroupVersionResource is the GVR of the resource.
 	gvr schema.GroupVersionResource
 	// Schema is the JSON schema of the resource. See [JSON Schema Specification Draft 4](http://json-schema.org/)
 	schema *spec.Schema
-	// SchemaExt is similar to Schema but can be used to create a CRD.
-	crd *extv1.CustomResourceDefinition
 	// Original represents the original object we found in the resource graph definition.
 	// This will contain all fields (and CEL expressions) as they were in the
 	// original object.
@@ -107,14 +104,9 @@ func (r *Resource) GetOrder() int {
 	return r.order
 }
 
-// GetGroupVersionResource GetGroupVersionKind returns the GVK of the resource.
+// GetGroupVersionResource returns the GVR of the resource.
 func (r *Resource) GetGroupVersionResource() schema.GroupVersionResource {
 	return r.gvr
-}
-
-// GetCRD returns the CRD of the resource.
-func (r *Resource) GetCRD() *extv1.CustomResourceDefinition {
-	return r.crd.DeepCopy()
 }
 
 // Unstructured returns the original object we found in the resource graph definition.

@@ -1,0 +1,6 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /
+COPY function-amd64 /function
+EXPOSE 9443
+USER nonroot:nonroot
+ENTRYPOINT ["/function"]

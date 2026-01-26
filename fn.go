@@ -2,19 +2,20 @@ package main
 
 import (
 	"context"
-	"strings"
 
 	"github.com/upbound/function-kro/input/v1beta1"
 	"github.com/upbound/function-kro/kro/graph"
+	kroschema "github.com/upbound/function-kro/kro/graph/schema"
+	schemaresolver "github.com/upbound/function-kro/kro/graph/schema/resolver"
 	"github.com/upbound/function-kro/kro/runtime"
-	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"github.com/crossplane/crossplane-runtime/pkg/errors"
-	"github.com/crossplane/crossplane-runtime/pkg/fieldpath"
-	"github.com/crossplane/crossplane-runtime/pkg/logging"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/request"
 	"github.com/crossplane/function-sdk-go/resource"
@@ -48,8 +49,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	// Collect all GVKs we need schemas for: the XR and all resource templates.
 	gvks := make([]schema.GroupVersionKind, 0, len(rg.Resources)+1)
-	gvks = append(gvks, schema.FromAPIVersionAndKind(oxr.Resource.GetAPIVersion(), oxr.Resource.GetKind()))
+	xrGVK := schema.FromAPIVersionAndKind(oxr.Resource.GetAPIVersion(), oxr.Resource.GetKind())
+	gvks = append(gvks, xrGVK)
 	for _, r := range rg.Resources {
 		u := &unstructured.Unstructured{}
 		if err := json.Unmarshal(r.Template.Raw, u); err != nil {
@@ -58,57 +61,75 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		}
 		gvks = append(gvks, schema.FromAPIVersionAndKind(u.GetAPIVersion(), u.GetKind()))
 	}
-	// Tell Crossplane we need the CRDs for our XR and resource templates.
-	// TODO(negz): In v2 we'll need to handle resource templates for built-in
-	// types that don't have CRDs - e.g. Deployment.
-	rsp.Requirements = RequiredCRDs(gvks...)
 
-	// Process the extra CRDs we required.
-	crds := make([]*extv1.CustomResourceDefinition, len(gvks))
-	for i := range gvks {
-		e, ok := req.GetExtraResources()[gvks[i].String()]
+	// Tell Crossplane we need the OpenAPI schemas for our XR and resource templates.
+	rsp.Requirements = RequiredSchemas(gvks...)
+
+	// Process the schemas Crossplane sent us.
+	schemas := make(map[schema.GroupVersionKind]*spec.Schema)
+	for _, gvk := range gvks {
+		s, ok := req.GetRequiredSchemas()[gvk.String()]
 		if !ok {
-			// Crossplane hasn't sent us this required CRD yet. Let it know.
-			f.log.Debug("Required CRD doesn't appear in extra resources - returning requirements", "gvk", gvks[i].String())
+			// Crossplane hasn't sent us this required schema yet. Return so it can.
+			f.log.Debug("Required schema doesn't appear in required_schemas - returning requirements", "gvk", gvk.String())
 			return rsp, nil
 		}
 
-		if len(e.GetItems()) < 1 {
-			// Crossplane is telling us the required CRD doesn't exist.
-			f.log.Debug("Required CRD is unavailable", "gvk", gvks[i].String())
-			response.Fatal(rsp, errors.Errorf("required CRD for %q is unavailable", gvks[i]))
+		if s.GetOpenapiV3() == nil {
+			// Crossplane is telling us the required schema doesn't exist or couldn't be found.
+			// This might be okay for built-in Kubernetes types which we have compiled-in schemas for.
+			f.log.Debug("Required schema has no OpenAPI v3 content, will try built-in resolver", "gvk", gvk.String())
+			continue
+		}
+
+		specSchema, err := schemaresolver.StructToSpecSchema(s.GetOpenapiV3())
+		if err != nil {
+			f.log.Debug("Cannot convert schema", "gvk", gvk, "error", err)
+			response.Fatal(rsp, errors.Wrapf(err, "cannot convert schema for %q", gvk))
 			return rsp, nil
 		}
 
-		crd := &extv1.CustomResourceDefinition{}
-		if err := resource.AsObject(e.GetItems()[0].GetResource(), crd); err != nil {
-			f.log.Debug("Cannot unmarshal CRD", "gvk", gvks[i])
-			response.Fatal(rsp, errors.Wrapf(err, "cannot unmarshal CRD for %q", gvks[i]))
-			return rsp, nil
-		}
+		f.log.Debug("Retrieved required schema", "gvk", gvk.String(), "specSchema", specSchema)
 
-		crds[i] = crd
+		// CRD schemas from Crossplane may have a metadata field, but it's typically
+		// just an unresolved $ref to ObjectMeta rather than the full schema.
+		// Always replace it with our fully-resolved ObjectMeta schema so the
+		// parser can validate CEL expressions like ${vpc.metadata.name}.
+		// Long-term fix: Crossplane should resolve $refs before sending schemas.
+		if specSchema.Properties == nil {
+			specSchema.Properties = make(map[string]spec.Schema)
+		}
+		specSchema.Properties["metadata"] = kroschema.ObjectMetaSchema
+
+		schemas[gvk] = specSchema
 	}
 
-	// TODO(negz): CRDs don't contain schema for metadata, except that it exists
-	// and is an object. This means CEL won't let you use it. We need to inject
-	// the OpenAPI schema for metadata into these CRDs before we can use
-	// metadata in templates.
-	gb, err := graph.NewBuilder(crds...)
+	// Create a combined schema resolver that uses Crossplane-provided schemas
+	// first, falling back to built-in Kubernetes type schemas.
+	schemaMapResolver := schemaresolver.NewSchemaMapResolver(schemas)
+	combinedResolver := schemaresolver.NewCombinedResolverFromSchemas(schemaMapResolver)
+
+	// Pass nil for REST mapper - we don't need GVR/namespace info since
+	// Crossplane handles resource creation directly.
+	gb := graph.NewBuilder(combinedResolver, nil)
+
+	// Get the XR schema for the graph definition.
+	xrSchema, err := combinedResolver.ResolveSchema(xrGVK)
 	if err != nil {
-		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph builder"))
+		response.Fatal(rsp, errors.Wrapf(err, "cannot resolve schema for XR %q", xrGVK))
+		return rsp, nil
+	}
+	if xrSchema == nil {
+		response.Fatal(rsp, errors.Errorf("schema for XR %q not found", xrGVK))
 		return rsp, nil
 	}
 
-	// TODO(negz): Does the CRD need anything special from crd.SynthesizeCRD?
-	g, err := gb.NewResourceGraphDefinition(rg, crds[0])
+	g, err := gb.NewResourceGraphDefinition(rg, xrSchema)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph"))
 		return rsp, nil
 	}
 
-	// TODO(negz): Does NewGraphRuntime make assumptions about the shape of the
-	// resource - e.g. its schema is from crd.SynthesizeCRD?
 	rt, err := g.NewGraphRuntime(&oxr.Resource.Unstructured)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot get graph runtime"))
@@ -123,7 +144,6 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 
 	ready := make(map[string]bool)
 
-	// TODO(negz): Is it okay to do this before create/update?
 	for name, r := range ocds {
 		id := string(name)
 		rt.SetResource(id, &r.Resource.Unstructured)
@@ -169,7 +189,6 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			dcds[resource.Name(id)].Ready = resource.ReadyTrue
 		}
 
-		// TODO(negz): Do we need to do this even when we return/continue above?
 		if _, err := rt.Synchronize(); err != nil {
 			response.Fatal(rsp, errors.Wrap(err, "cannot synchronize instance"))
 			return rsp, nil
@@ -212,17 +231,15 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	return rsp, nil
 }
 
-// RequiredCRDs returns the extra CRDs this function requires to run.
-func RequiredCRDs(gvks ...schema.GroupVersionKind) *fnv1.Requirements {
-	rq := &fnv1.Requirements{ExtraResources: map[string]*fnv1.ResourceSelector{}}
+// RequiredSchemas returns the schema requirements for the given GVKs.
+// This tells Crossplane which OpenAPI schemas the function needs.
+func RequiredSchemas(gvks ...schema.GroupVersionKind) *fnv1.Requirements {
+	rq := &fnv1.Requirements{Schemas: map[string]*fnv1.SchemaSelector{}}
 
 	for _, gvk := range gvks {
-		rq.ExtraResources[gvk.String()] = &fnv1.ResourceSelector{
-			ApiVersion: "apiextensions.k8s.io/v1",
-			Kind:       "CustomResourceDefinition",
-			Match: &fnv1.ResourceSelector_MatchName{
-				MatchName: strings.ToLower(gvk.Kind + "s." + gvk.Group),
-			},
+		rq.Schemas[gvk.String()] = &fnv1.SchemaSelector{
+			ApiVersion: gvk.GroupVersion().String(),
+			Kind:       gvk.Kind,
 		}
 	}
 
