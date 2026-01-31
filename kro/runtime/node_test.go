@@ -21,8 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/kubernetes-sigs/kro/pkg/graph"
-	"github.com/kubernetes-sigs/kro/pkg/graph/variable"
+	"github.com/upbound/function-kro/kro/graph"
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 func TestNode_IsIgnored(t *testing.T) {

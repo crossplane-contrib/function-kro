@@ -20,8 +20,8 @@ import (
 
 	"github.com/google/cel-go/cel"
 
-	"github.com/kubernetes-sigs/kro/api/v1alpha1"
-	krocel "github.com/kubernetes-sigs/kro/pkg/cel"
+	"github.com/upbound/function-kro/input/v1alpha1"
+	krocel "github.com/upbound/function-kro/kro/cel"
 )
 
 func TestValidateRGResourceNames(t *testing.T) {

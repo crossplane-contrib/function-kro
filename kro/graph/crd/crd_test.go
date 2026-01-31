@@ -17,7 +17,7 @@ package crd
 import (
 	"testing"
 
-	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+	"github.com/upbound/function-kro/input/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"

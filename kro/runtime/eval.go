@@ -20,8 +20,8 @@ import (
 
 	"github.com/google/cel-go/cel"
 
-	krocel "github.com/kubernetes-sigs/kro/pkg/cel"
-	"github.com/kubernetes-sigs/kro/pkg/graph/variable"
+	krocel "github.com/upbound/function-kro/kro/cel"
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 // buildEnv creates a CEL environment for the given variable names.

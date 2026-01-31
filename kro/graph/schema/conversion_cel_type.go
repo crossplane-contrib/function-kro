@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/google/cel-go/cel"
-	krocel "github.com/kubernetes-sigs/kro/pkg/cel"
+	krocel "github.com/upbound/function-kro/kro/cel"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiservercel "k8s.io/apiserver/pkg/cel"
 	"k8s.io/utils/ptr"

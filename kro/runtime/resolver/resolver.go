@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kubernetes-sigs/kro/pkg/graph/fieldpath"
-	"github.com/kubernetes-sigs/kro/pkg/graph/variable"
+	"github.com/upbound/function-kro/kro/graph/fieldpath"
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 // ResolutionResult represents the result of resolving a single expression.

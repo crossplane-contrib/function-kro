@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/google/cel-go/cel"
-	krocel "github.com/kubernetes-sigs/kro/pkg/cel"
+	krocel "github.com/upbound/function-kro/kro/cel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"

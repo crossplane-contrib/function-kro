@@ -17,7 +17,7 @@ package schema
 import (
 	"fmt"
 
-	krocel "github.com/kubernetes-sigs/kro/pkg/cel"
+	krocel "github.com/upbound/function-kro/kro/cel"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )

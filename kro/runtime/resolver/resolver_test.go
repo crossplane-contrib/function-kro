@@ -21,7 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/kubernetes-sigs/kro/pkg/graph/variable"
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 func TestGetValueFromPath(t *testing.T) {

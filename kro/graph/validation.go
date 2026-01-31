@@ -21,7 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+	"github.com/upbound/function-kro/input/v1alpha1"
 )
 
 var (

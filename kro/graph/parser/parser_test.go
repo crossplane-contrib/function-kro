@@ -22,7 +22,7 @@ import (
 
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"github.com/kubernetes-sigs/kro/pkg/graph/variable"
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 // newSchema creates a spec.Schema with properly initialized VendorExtensible

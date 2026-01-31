@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/google/cel-go/cel"
-	"github.com/kubernetes-sigs/kro/pkg/graph/variable"
+	"github.com/upbound/function-kro/kro/graph/variable"
 )
 
 // ParseSchemalessResource extracts CEL expressions without a schema, this is useful

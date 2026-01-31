@@ -24,10 +24,10 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 
-	krov1alpha1 "github.com/kubernetes-sigs/kro/api/v1alpha1"
-	"github.com/kubernetes-sigs/kro/pkg/graph/variable"
-	"github.com/kubernetes-sigs/kro/pkg/testutil/generator"
-	"github.com/kubernetes-sigs/kro/pkg/testutil/k8s"
+	krov1alpha1 "github.com/upbound/function-kro/input/v1alpha1"
+	"github.com/upbound/function-kro/kro/graph/variable"
+	"github.com/upbound/function-kro/kro/testutil/generator"
+	"github.com/upbound/function-kro/kro/testutil/k8s"
 )
 
 func TestGraphBuilder_Validation(t *testing.T) {
