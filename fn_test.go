@@ -2,20 +2,15 @@ package main
 
 import (
 	"context"
-	"errors"
 	"testing"
 
-	"github.com/go-openapi/jsonreference"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
-	"k8s.io/kube-openapi/pkg/validation/spec"
 	"k8s.io/utils/ptr"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
-	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
@@ -36,8 +31,8 @@ func TestRunFunction(t *testing.T) {
 		args   args
 		want   want
 	}{
-		"MissingCRDs": {
-			reason: "The function should return requirements when CRDs are not yet available",
+		"MissingSchemas": {
+			reason: "The function should return requirements when schemas are not yet available",
 			args: args{
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test"},
@@ -146,98 +141,76 @@ func TestRunFunction(t *testing.T) {
 							}`),
 						},
 					},
-					RequiredResources: map[string]*fnv1.Resources{
+					RequiredSchemas: map[string]*fnv1.Schema{
 						"example.crossplane.io/v1, Kind=XBucket": {
-							Items: []*fnv1.Resource{{
-								Resource: resource.MustStructJSON(`{
-									"apiVersion": "apiextensions.k8s.io/v1",
-									"kind": "CustomResourceDefinition",
-									"metadata": {"name": "xbuckets.example.crossplane.io"},
+							OpenapiV3: resource.MustStructJSON(`{
+								"type": "object",
+								"properties": {
+									"apiVersion": {"type": "string"},
+									"kind": {"type": "string"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"spec": {
-										"group": "example.crossplane.io",
-										"names": {"kind": "XBucket", "plural": "xbuckets"},
-										"scope": "Cluster",
-										"versions": [{
-											"name": "v1",
-											"served": true,
-											"storage": true,
-											"schema": {
-												"openAPIV3Schema": {
-													"type": "object",
-													"properties": {
-														"apiVersion": {"type": "string"},
-														"kind": {"type": "string"},
-														"metadata": {"type": "object"},
-														"spec": {
-															"type": "object",
-															"properties": {
-																"bucketName": {"type": "string"}
-															}
-														},
-														"status": {
-															"type": "object",
-															"properties": {
-																"bucketName": {"type": "string"}
-															}
-														}
-													}
-												}
-											}
-										}]
+										"type": "object",
+										"properties": {
+											"bucketName": {"type": "string"}
+										}
+									},
+									"status": {
+										"type": "object",
+										"properties": {
+											"bucketName": {"type": "string"}
+										}
 									}
-								}`),
-							}},
+								}
+							}`),
 						},
 						"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
-							Items: []*fnv1.Resource{{
-								Resource: resource.MustStructJSON(`{
-									"apiVersion": "apiextensions.k8s.io/v1",
-									"kind": "CustomResourceDefinition",
-									"metadata": {"name": "buckets.s3.aws.upbound.io"},
+							OpenapiV3: resource.MustStructJSON(`{
+								"type": "object",
+								"properties": {
+									"apiVersion": {"type": "string"},
+									"kind": {"type": "string"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"spec": {
-										"group": "s3.aws.upbound.io",
-										"names": {"kind": "Bucket", "plural": "buckets"},
-										"scope": "Cluster",
-										"versions": [{
-											"name": "v1beta1",
-											"served": true,
-											"storage": true,
-											"schema": {
-												"openAPIV3Schema": {
-													"type": "object",
-													"properties": {
-														"apiVersion": {"type": "string"},
-														"kind": {"type": "string"},
-														"metadata": {"type": "object"},
-														"spec": {
-															"type": "object",
-															"properties": {
-																"forProvider": {
-																	"type": "object",
-																	"properties": {
-																		"region": {"type": "string"}
-																	}
-																}
-															}
-														},
-														"status": {
-															"type": "object",
-															"properties": {
-																"atProvider": {
-																	"type": "object",
-																	"properties": {
-																		"id": {"type": "string"}
-																	}
-																}
-															}
-														}
-													}
+										"type": "object",
+										"properties": {
+											"forProvider": {
+												"type": "object",
+												"properties": {
+													"region": {"type": "string"}
 												}
 											}
-										}]
+										}
+									},
+									"status": {
+										"type": "object",
+										"properties": {
+											"atProvider": {
+												"type": "object",
+												"properties": {
+													"id": {"type": "string"}
+												}
+											}
+										}
 									}
-								}`),
-							}},
+								}
+							}`),
 						},
 					},
 				},
@@ -352,99 +325,77 @@ func TestRunFunction(t *testing.T) {
 							},
 						},
 					},
-					RequiredResources: map[string]*fnv1.Resources{
+					RequiredSchemas: map[string]*fnv1.Schema{
 						"example.crossplane.io/v1, Kind=XBucket": {
-							Items: []*fnv1.Resource{{
-								Resource: resource.MustStructJSON(`{
-									"apiVersion": "apiextensions.k8s.io/v1",
-									"kind": "CustomResourceDefinition",
-									"metadata": {"name": "xbuckets.example.crossplane.io"},
-									"spec": {
-										"group": "example.crossplane.io",
-										"names": {"kind": "XBucket", "plural": "xbuckets"},
-										"scope": "Cluster",
-										"versions": [{
-											"name": "v1",
-											"served": true,
-											"storage": true,
-											"schema": {
-												"openAPIV3Schema": {
-													"type": "object",
-													"properties": {
-														"apiVersion": {"type": "string"},
-														"kind": {"type": "string"},
-														"metadata": {"type": "object"},
-														"spec": {"type": "object"},
-														"status": {
-															"type": "object",
-															"properties": {
-																"bucketARN": {"type": "string"}
-															}
-														}
-													}
-												}
-											}
-										}]
+							OpenapiV3: resource.MustStructJSON(`{
+								"type": "object",
+								"properties": {
+									"apiVersion": {"type": "string"},
+									"kind": {"type": "string"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
+									"spec": {"type": "object"},
+									"status": {
+										"type": "object",
+										"properties": {
+											"bucketARN": {"type": "string"}
+										}
 									}
-								}`),
-							}},
+								}
+							}`),
 						},
 						"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
-							Items: []*fnv1.Resource{{
-								Resource: resource.MustStructJSON(`{
-									"apiVersion": "apiextensions.k8s.io/v1",
-									"kind": "CustomResourceDefinition",
-									"metadata": {"name": "buckets.s3.aws.upbound.io"},
+							OpenapiV3: resource.MustStructJSON(`{
+								"type": "object",
+								"properties": {
+									"apiVersion": {"type": "string"},
+									"kind": {"type": "string"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"spec": {
-										"group": "s3.aws.upbound.io",
-										"names": {"kind": "Bucket", "plural": "buckets"},
-										"scope": "Cluster",
-										"versions": [{
-											"name": "v1beta1",
-											"served": true,
-											"storage": true,
-											"schema": {
-												"openAPIV3Schema": {
-													"type": "object",
-													"properties": {
-														"apiVersion": {"type": "string"},
-														"kind": {"type": "string"},
-														"metadata": {"type": "object"},
-														"spec": {
-															"type": "object",
-															"properties": {
-																"forProvider": {
-																	"type": "object",
-																	"properties": {
-																		"region": {"type": "string"},
-																		"objectLockEnabled": {"type": "boolean"}
-																	}
-																},
-																"managementPolicies": {
-																	"type": "array",
-																	"items": {"type": "string"}
-																}
-															}
-														},
-														"status": {
-															"type": "object",
-															"properties": {
-																"atProvider": {
-																	"type": "object",
-																	"properties": {
-																		"arn": {"type": "string"},
-																		"id": {"type": "string"}
-																	}
-																}
-															}
-														}
-													}
+										"type": "object",
+										"properties": {
+											"forProvider": {
+												"type": "object",
+												"properties": {
+													"region": {"type": "string"},
+													"objectLockEnabled": {"type": "boolean"}
+												}
+											},
+											"managementPolicies": {
+												"type": "array",
+												"items": {"type": "string"}
+											}
+										}
+									},
+									"status": {
+										"type": "object",
+										"properties": {
+											"atProvider": {
+												"type": "object",
+												"properties": {
+													"arn": {"type": "string"},
+													"id": {"type": "string"}
 												}
 											}
-										}]
+										}
 									}
-								}`),
-							}},
+								}
+							}`),
 						},
 					},
 				},
@@ -558,25 +509,20 @@ func TestRunFunction(t *testing.T) {
 								"properties": {
 									"apiVersion": {"type": "string"},
 									"kind": {"type": "string"},
-									"metadata": {"$ref": "#/components/schemas/ObjectMeta"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"spec": {"type": "object"},
 									"status": {
 										"type": "object",
 										"properties": {
 											"region": {"type": "string"}
-										}
-									}
-								},
-								"components": {
-									"schemas": {
-										"ObjectMeta": {
-											"type": "object",
-											"properties": {
-												"name": {"type": "string"},
-												"namespace": {"type": "string"},
-												"labels": {"type": "object", "additionalProperties": {"type": "string"}},
-												"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
-											}
 										}
 									}
 								}
@@ -588,7 +534,15 @@ func TestRunFunction(t *testing.T) {
 								"properties": {
 									"apiVersion": {"type": "string"},
 									"kind": {"type": "string"},
-									"metadata": {"$ref": "#/components/schemas/ObjectMeta"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"spec": {
 										"type": "object",
 										"properties": {
@@ -597,19 +551,6 @@ func TestRunFunction(t *testing.T) {
 												"properties": {
 													"region": {"type": "string"}
 												}
-											}
-										}
-									}
-								},
-								"components": {
-									"schemas": {
-										"ObjectMeta": {
-											"type": "object",
-											"properties": {
-												"name": {"type": "string"},
-												"namespace": {"type": "string"},
-												"labels": {"type": "object", "additionalProperties": {"type": "string"}},
-												"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
 											}
 										}
 									}
@@ -622,23 +563,18 @@ func TestRunFunction(t *testing.T) {
 								"properties": {
 									"apiVersion": {"type": "string"},
 									"kind": {"type": "string"},
-									"metadata": {"$ref": "#/components/schemas/ObjectMeta"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"data": {
 										"type": "object",
 										"additionalProperties": {"type": "string"}
-									}
-								},
-								"components": {
-									"schemas": {
-										"ObjectMeta": {
-											"type": "object",
-											"properties": {
-												"name": {"type": "string"},
-												"namespace": {"type": "string"},
-												"labels": {"type": "object", "additionalProperties": {"type": "string"}},
-												"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
-											}
-										}
 									}
 								}
 							}`),
@@ -785,7 +721,15 @@ func TestRunFunction(t *testing.T) {
 								"properties": {
 									"apiVersion": {"type": "string"},
 									"kind": {"type": "string"},
-									"metadata": {"$ref": "#/components/schemas/ObjectMeta"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"spec": {
 										"type": "object",
 										"properties": {
@@ -798,19 +742,6 @@ func TestRunFunction(t *testing.T) {
 											"region": {"type": "string"}
 										}
 									}
-								},
-								"components": {
-									"schemas": {
-										"ObjectMeta": {
-											"type": "object",
-											"properties": {
-												"name": {"type": "string"},
-												"namespace": {"type": "string"},
-												"labels": {"type": "object", "additionalProperties": {"type": "string"}},
-												"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
-											}
-										}
-									}
 								}
 							}`),
 						},
@@ -820,7 +751,15 @@ func TestRunFunction(t *testing.T) {
 								"properties": {
 									"apiVersion": {"type": "string"},
 									"kind": {"type": "string"},
-									"metadata": {"$ref": "#/components/schemas/ObjectMeta"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"spec": {
 										"type": "object",
 										"properties": {
@@ -829,19 +768,6 @@ func TestRunFunction(t *testing.T) {
 												"properties": {
 													"region": {"type": "string"}
 												}
-											}
-										}
-									}
-								},
-								"components": {
-									"schemas": {
-										"ObjectMeta": {
-											"type": "object",
-											"properties": {
-												"name": {"type": "string"},
-												"namespace": {"type": "string"},
-												"labels": {"type": "object", "additionalProperties": {"type": "string"}},
-												"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
 											}
 										}
 									}
@@ -854,23 +780,18 @@ func TestRunFunction(t *testing.T) {
 								"properties": {
 									"apiVersion": {"type": "string"},
 									"kind": {"type": "string"},
-									"metadata": {"$ref": "#/components/schemas/ObjectMeta"},
+									"metadata": {
+										"type": "object",
+										"properties": {
+											"name": {"type": "string"},
+											"namespace": {"type": "string"},
+											"labels": {"type": "object", "additionalProperties": {"type": "string"}},
+											"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+										}
+									},
 									"data": {
 										"type": "object",
 										"additionalProperties": {"type": "string"}
-									}
-								},
-								"components": {
-									"schemas": {
-										"ObjectMeta": {
-											"type": "object",
-											"properties": {
-												"name": {"type": "string"},
-												"namespace": {"type": "string"},
-												"labels": {"type": "object", "additionalProperties": {"type": "string"}},
-												"annotations": {"type": "object", "additionalProperties": {"type": "string"}}
-											}
-										}
 									}
 								}
 							}`),
@@ -982,214 +903,4 @@ func TestRunFunction(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestResolveSchemaRefs(t *testing.T) {
-	type args struct {
-		input *structpb.Struct
-	}
-	type want struct {
-		schema *spec.Schema
-		err    error
-	}
-
-	cases := map[string]struct {
-		reason string
-		args   args
-		want   want
-	}{
-		"NilInput": {
-			reason: "Nil input should return error",
-			args:   args{input: nil},
-			want:   want{err: errors.New("schema struct is nil")},
-		},
-		"NoComponents": {
-			reason: "Schema without components should pass through unchanged",
-			args: args{
-				input: mustStruct(map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"name": map[string]any{"type": "string"},
-					},
-				}),
-			},
-			want: want{
-				schema: &spec.Schema{
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"name": {SchemaProps: spec.SchemaProps{Type: []string{"string"}}},
-						},
-					},
-				},
-			},
-		},
-		"SimpleRefResolution": {
-			reason: "Refs to components should be resolved inline",
-			args: args{
-				input: mustStruct(map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"timestamp": map[string]any{
-							"$ref": "#/components/schemas/Time",
-						},
-					},
-					"components": map[string]any{
-						"schemas": map[string]any{
-							"Time": map[string]any{
-								"type":        "string",
-								"format":      "date-time",
-								"description": "A timestamp",
-							},
-						},
-					},
-				}),
-			},
-			want: want{
-				schema: &spec.Schema{
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"timestamp": {
-								SchemaProps: spec.SchemaProps{
-									Type:        []string{"string"},
-									Format:      "date-time",
-									Description: "A timestamp",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		"NestedRefResolution": {
-			reason: "Nested refs (ref pointing to schema with another ref) should be resolved",
-			args: args{
-				input: mustStruct(map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"metadata": map[string]any{
-							"$ref": "#/components/schemas/ObjectMeta",
-						},
-					},
-					"components": map[string]any{
-						"schemas": map[string]any{
-							"ObjectMeta": map[string]any{
-								"type": "object",
-								"properties": map[string]any{
-									"creationTimestamp": map[string]any{
-										"$ref": "#/components/schemas/Time",
-									},
-								},
-							},
-							"Time": map[string]any{
-								"type":   "string",
-								"format": "date-time",
-							},
-						},
-					},
-				}),
-			},
-			want: want{
-				schema: &spec.Schema{
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"metadata": {
-								SchemaProps: spec.SchemaProps{
-									Type: []string{"object"},
-									Properties: map[string]spec.Schema{
-										"creationTimestamp": {
-											SchemaProps: spec.SchemaProps{
-												Type:   []string{"string"},
-												Format: "date-time",
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-		"ArrayItemRef": {
-			reason: "Refs in array items should be resolved",
-			args: args{
-				input: mustStruct(map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"items": map[string]any{
-							"type": "array",
-							"items": map[string]any{
-								"$ref": "#/components/schemas/Item",
-							},
-						},
-					},
-					"components": map[string]any{
-						"schemas": map[string]any{
-							"Item": map[string]any{
-								"type": "object",
-								"properties": map[string]any{
-									"id": map[string]any{"type": "integer"},
-								},
-							},
-						},
-					},
-				}),
-			},
-			want: want{
-				schema: &spec.Schema{
-					SchemaProps: spec.SchemaProps{
-						Type: []string{"object"},
-						Properties: map[string]spec.Schema{
-							"items": {
-								SchemaProps: spec.SchemaProps{
-									Type: []string{"array"},
-									Items: &spec.SchemaOrArray{
-										Schema: &spec.Schema{
-											SchemaProps: spec.SchemaProps{
-												Type: []string{"object"},
-												Properties: map[string]spec.Schema{
-													"id": {SchemaProps: spec.SchemaProps{Type: []string{"integer"}}},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			got, err := resolveSchemaRefs(tc.args.input)
-
-			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
-				t.Errorf("%s\nresolveSchemaRefs(...): -want err, +got err:\n%s", tc.reason, diff)
-			}
-
-			// Ignore ExtraProps (contains leftover "components" from JSON) and unexported Ref fields
-			opts := cmp.Options{
-				cmpopts.IgnoreUnexported(spec.Ref{}, jsonreference.Ref{}),
-				cmpopts.IgnoreFields(spec.Schema{}, "ExtraProps"),
-			}
-			if diff := cmp.Diff(tc.want.schema, got, opts); diff != "" {
-				t.Errorf("%s\nresolveSchemaRefs(...): -want, +got:\n%s", tc.reason, diff)
-			}
-		})
-	}
-}
-
-// mustStruct creates a structpb.Struct from a map, panicking on error.
-func mustStruct(m map[string]any) *structpb.Struct {
-	s, err := structpb.NewStruct(m)
-	if err != nil {
-		panic(err)
-	}
-	return s
 }

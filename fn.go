@@ -8,14 +8,13 @@ import (
 	"strconv"
 	"strings"
 
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/structpb"
-
 	"github.com/upbound/function-kro/input/v1beta1"
 	"github.com/upbound/function-kro/kro/graph"
 	schemaresolver "github.com/upbound/function-kro/kro/graph/schema/resolver"
 	"github.com/upbound/function-kro/kro/metadata"
 	"github.com/upbound/function-kro/kro/runtime"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -43,7 +42,7 @@ type Function struct {
 
 // RunFunction runs the Function.
 func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
-	f.log.Debug("Running function", "tag", req.GetMeta().GetTag())
+	f.log.Debug("Running function", "tag", req.GetMeta().GetTag(), "advertisesCapabilities", request.AdvertisesCapabilities(req), "capabilities", req.GetMeta().GetCapabilities())
 	rsp := response.To(req, response.DefaultTTL)
 
 	// Get the input resource graph
@@ -366,7 +365,7 @@ func (f *Function) buildResolverFromSchemas(req *fnv1.RunFunctionRequest, gvks [
 			continue
 		}
 
-		specSchema, err := resolveSchemaRefs(s.GetOpenapiV3())
+		specSchema, err := structToSpecSchema(s.GetOpenapiV3())
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "cannot convert schema for %q", gvk)
 		}
@@ -543,68 +542,24 @@ func (f *Function) externalRefSelectorsFromRuntime(rt *runtime.Runtime, xrNamesp
 	return selectors, nil
 }
 
-// resolveSchemaRefs converts a protobuf OpenAPI v3 schema to spec.Schema and
-// resolves all $ref pointers using the components.schemas section.
-// This handles schemas from Crossplane's required_schemas which include refs
-// in the format "#/components/schemas/io.k8s.apimachinery...".
-func resolveSchemaRefs(openapiV3 *structpb.Struct) (*spec.Schema, error) {
-	if openapiV3 == nil {
+// StructToSpecSchema converts a protobuf Struct (as returned by Crossplane's
+// required_schemas) to a kube-openapi spec.Schema.
+func structToSpecSchema(s *structpb.Struct) (*spec.Schema, error) {
+	if s == nil {
 		return nil, fmt.Errorf("schema struct is nil")
 	}
 
-	// Marshal protobuf to JSON once
-	jsonBytes, err := protojson.Marshal(openapiV3)
+	// Convert protobuf Struct to JSON bytes
+	jsonBytes, err := protojson.Marshal(s)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal to JSON: %w", err)
+		return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
 	}
 
-	// Parse into a structure that captures components.schemas
-	var doc struct {
-		Components struct {
-			Schemas map[string]json.RawMessage `json:"schemas"`
-		} `json:"components"`
-	}
-	if err := json.Unmarshal(jsonBytes, &doc); err != nil {
-		return nil, fmt.Errorf("failed to parse components: %w", err)
+	// Unmarshal JSON into spec.Schema
+	schema := &spec.Schema{}
+	if err := json.Unmarshal(jsonBytes, schema); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON to spec.Schema: %w", err)
 	}
 
-	// Convert component schemas to spec.Schema
-	componentSchemas := make(map[string]*spec.Schema, len(doc.Components.Schemas))
-	for name, raw := range doc.Components.Schemas {
-		var s spec.Schema
-		if err := json.Unmarshal(raw, &s); err != nil {
-			return nil, fmt.Errorf("failed to parse component schema %q: %w", name, err)
-		}
-		componentSchemas[name] = &s
-	}
-
-	// Convert main schema
-	var mainSchema spec.Schema
-	if err := json.Unmarshal(jsonBytes, &mainSchema); err != nil {
-		return nil, fmt.Errorf("failed to parse main schema: %w", err)
-	}
-
-	// If no component schemas, nothing to resolve
-	if len(componentSchemas) == 0 {
-		return &mainSchema, nil
-	}
-
-	// Resolve refs using the k8s apiserver resolver
-	const mainRef = "__main__"
-	const refPrefix = "#/components/schemas/"
-
-	resolved, err := resolver.PopulateRefs(func(ref string) (*spec.Schema, bool) {
-		if ref == mainRef {
-			return &mainSchema, true
-		}
-		if name, ok := strings.CutPrefix(ref, refPrefix); ok {
-			s, found := componentSchemas[name]
-			return s, found
-		}
-		return nil, false
-	}, mainRef)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve schema refs: %w", err)
-	}
-	return resolved, nil
+	return schema, nil
 }
