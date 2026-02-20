@@ -8,15 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/upbound/function-kro/input/v1beta1"
-	"github.com/upbound/function-kro/kro/graph"
-	schemaresolver "github.com/upbound/function-kro/kro/graph/schema/resolver"
-	"github.com/upbound/function-kro/kro/metadata"
-	"github.com/upbound/function-kro/kro/runtime"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sjson "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
@@ -25,12 +21,19 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
+
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/request"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/resource/composed"
 	"github.com/crossplane/function-sdk-go/resource/composite"
 	"github.com/crossplane/function-sdk-go/response"
+
+	"github.com/upbound/function-kro/input/v1beta1"
+	"github.com/upbound/function-kro/kro/graph"
+	schemaresolver "github.com/upbound/function-kro/kro/graph/schema/resolver"
+	"github.com/upbound/function-kro/kro/metadata"
+	"github.com/upbound/function-kro/kro/runtime"
 )
 
 // Function returns whatever response you ask it to.
@@ -79,38 +82,23 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		gvks = append(gvks, schema.FromAPIVersionAndKind(u.GetAPIVersion(), u.GetKind()))
 	}
 
-	// Request schemas via required_schemas (supported in Crossplanev2.2+) for
-	// all the resources, but as a fallback for older versions of Crossplane,
-	// request CRDs via required_resources for all the resources too.
-	rsp.Requirements = &fnv1.Requirements{
-		Schemas:   RequiredSchemas(gvks...).Schemas,
-		Resources: RequiredCRDs(gvks...).Resources,
-	}
+	// Request the schemas we need in the function response so Crossplane will
+	// send them to us as part of the next request. Do this on every function
+	// run so our requirements are stable.
+	f.requireSchemas(req, rsp, gvks)
 
-	// Create a schema resolver for the graph to use from the schemas crossplane provided via required_schemas
-	combinedResolver, xrSchema, err := f.buildResolverFromSchemas(req, gvks, xrGVK)
+	// Build the schema resolver from the schemas that Crossplane has provided to us.
+	resolver, xrSchema, err := f.buildResolver(req, gvks, xrGVK)
 	if err != nil {
-		response.Fatal(rsp, err)
+		response.Fatal(rsp, errors.Wrapf(err, "cannot process schemas"))
 		return rsp, nil
-	}
-
-	if combinedResolver == nil {
-		// We didn't get a resolver from the required schemas, so fall back to using CRDs
-		combinedResolver, xrSchema, err = f.buildResolverFromCRDs(req, gvks, xrGVK)
-		if err != nil {
-			response.Fatal(rsp, err)
-			return rsp, nil
-		}
-	}
-
-	if combinedResolver == nil {
-		// We don't have schemas or CRDs to build a schema resolver yet, keep waiting
-		f.log.Debug("Waiting for Crossplane to provide schemas or CRDs")
+	} else if resolver == nil {
+		f.log.Debug("Waiting for Crossplane to provide schemas")
 		return rsp, nil
 	}
 
 	// Build the KRO graph using the schema resolver.
-	gb := graph.NewBuilder(combinedResolver, nil)
+	gb := graph.NewBuilder(resolver, nil)
 	g, err := gb.NewResourceGraphDefinition(rg, xrSchema)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph"))
@@ -124,7 +112,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// Build a map from node ID to node for fast lookups.
+	// Build a map from node ID to node for easy lookups later on.
 	nodesByID := make(map[string]*runtime.Node)
 	for _, node := range rt.Nodes() {
 		nodesByID[node.Spec.Meta.ID] = node
@@ -139,19 +127,19 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			continue
 		}
 
-		// get the required resource the Crossplane provided to us for this external reference
-		resources, ok := req.GetRequiredResources()[r.ID]
-		if !ok || len(resources.GetItems()) == 0 {
+		// get the required resource that Crossplane provided to us for this external reference
+		resources, ok, err := request.GetRequiredResource(req, r.ID)
+		if err != nil {
+			response.Fatal(rsp, errors.Wrapf(err, "cannot get external resource %q", r.ID))
+			return rsp, nil
+		}
+		if !ok || len(resources) == 0 {
 			f.log.Debug("External resource not available yet", "id", r.ID)
 			continue
 		}
 
-		// convert required resource to a kubernetes object
-		u := &unstructured.Unstructured{}
-		if err := resource.AsObject(resources.GetItems()[0].GetResource(), u); err != nil {
-			response.Fatal(rsp, errors.Wrapf(err, "cannot convert external resource %q", r.ID))
-			return rsp, nil
-		}
+		// we always expect exactly one external resource since we ask for a specific one
+		u := resources[0].Resource
 
 		// set the resource's observed state on the runtime node, so KRO has access to it for later evaluations etc.
 		if node, ok := nodesByID[r.ID]; ok {
@@ -160,7 +148,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		}
 	}
 
-	// Find all external references from the input so we can include them in the
+	// Find all external references from the runtime so we can include them in the
 	// response's required resources. Basically, we'll get Crossplane to look up
 	// external references in the control plane for us.
 	externalRefSelectors, err := f.externalRefSelectorsFromRuntime(rt, oxr.Resource.GetNamespace())
@@ -168,7 +156,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		response.Fatal(rsp, errors.Wrap(err, "cannot build external resource selectors"))
 		return rsp, nil
 	}
-	maps.Copy(rsp.Requirements.Resources, externalRefSelectors)
+	if rsp.Requirements.Resources == nil {
+		rsp.Requirements.Resources = make(map[string]*fnv1.ResourceSelector)
+	}
+	maps.Copy(rsp.GetRequirements().GetResources(), externalRefSelectors)
 
 	// get the observed composed resources
 	ocds, err := request.GetObservedComposedResources(req)
@@ -337,15 +328,52 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	return rsp, nil
 }
 
+func (f *Function) requireSchemas(req *fnv1.RunFunctionRequest, rsp *fnv1.RunFunctionResponse, gvks []schema.GroupVersionKind) {
+	// If Crossplane supports required_schemas (v2.2+), use those exclusively.
+	if request.HasCapability(req, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS) {
+		for _, gvk := range gvks {
+			response.RequireSchema(rsp, gvk.String(), gvk.GroupVersion().String(), gvk.Kind)
+		}
+		return
+	}
+
+	// Crossplane doesn't support required_schemas, fall back to requesting CRDs
+	// via required_resources.
+	if rsp.GetRequirements() == nil {
+		rsp.Requirements = &fnv1.Requirements{}
+	}
+
+	resources := map[string]*fnv1.ResourceSelector{}
+	for _, gvk := range gvks {
+		resources[gvk.String()] = &fnv1.ResourceSelector{
+			ApiVersion: "apiextensions.k8s.io/v1",
+			Kind:       "CustomResourceDefinition",
+			Match: &fnv1.ResourceSelector_MatchName{
+				MatchName: strings.ToLower(gvk.Kind + "s." + gvk.Group),
+			},
+		}
+	}
+
+	rsp.Requirements.Resources = resources
+}
+
+func (f *Function) buildResolver(req *fnv1.RunFunctionRequest, gvks []schema.GroupVersionKind, xrGVK schema.GroupVersionKind) (resolver.SchemaResolver, *spec.Schema, error) {
+	// If Crossplane supports required_schemas (v2.2+), use those exclusively.
+	if request.HasCapability(req, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS) {
+		return f.buildResolverFromSchemas(req, gvks, xrGVK)
+	}
+
+	return f.buildResolverFromCRDs(req, gvks, xrGVK)
+}
+
 // buildResolverFromSchemas attempts to build a resolver from Crossplane's required_schemas.
 // Returns (nil, nil, nil) if schemas aren't available yet (not an error).
 // Returns (resolver, xrSchema, nil) on success.
 // Returns (nil, nil, error) on fatal errors.
 func (f *Function) buildResolverFromSchemas(req *fnv1.RunFunctionRequest, gvks []schema.GroupVersionKind, xrGVK schema.GroupVersionKind) (resolver.SchemaResolver, *spec.Schema, error) {
-	reqSchemas := req.GetRequiredSchemas()
+	reqSchemas := request.GetRequiredSchemas(req)
 	if len(reqSchemas) == 0 {
-		// Crossplane hasn't sent any schemas - either it doesn't support
-		// required_schemas or hasn't processed our requirements yet.
+		// Crossplane hasn't sent any schemas yet
 		return nil, nil, nil
 	}
 
@@ -353,19 +381,19 @@ func (f *Function) buildResolverFromSchemas(req *fnv1.RunFunctionRequest, gvks [
 	for _, gvk := range gvks {
 		s, ok := reqSchemas[gvk.String()]
 		if !ok {
-			// This GVK wasn't in the response. Could be a built-in type
-			// that Crossplane doesn't have a schema for.
+			// This GVK wasn't in the response, log it but continue
 			f.log.Debug("Schema not in required_schemas response", "gvk", gvk.String())
 			continue
 		}
 
-		if s.GetOpenapiV3() == nil {
-			// Schema exists but has no content - might be built-in type.
+		if s == nil {
+			// Schema exists but has no content, log it but continue
 			f.log.Debug("Schema has no OpenAPI v3 content", "gvk", gvk.String())
 			continue
 		}
 
-		specSchema, err := structToSpecSchema(s.GetOpenapiV3())
+		// convert the schema protobuf struct to the schema type KRO expects
+		specSchema, err := structToSpecSchema(s)
 		if err != nil {
 			return nil, nil, errors.Wrapf(err, "cannot convert schema for %q", gvk)
 		}
@@ -373,12 +401,12 @@ func (f *Function) buildResolverFromSchemas(req *fnv1.RunFunctionRequest, gvks [
 		schemas[gvk] = specSchema
 	}
 
-	// If we got no schemas at all from this path, return nil to try CRD path.
+	// There are no schemas we care about yet
 	if len(schemas) == 0 {
 		return nil, nil, nil
 	}
 
-	// Create combined resolver: schema map + built-in core types.
+	// Create the schema map resolver
 	schemaMapResolver := schemaresolver.NewSchemaMapResolver(schemas)
 	combinedResolver := schemaresolver.NewCombinedResolverFromSchemas(schemaMapResolver)
 
@@ -400,15 +428,18 @@ func (f *Function) buildResolverFromSchemas(req *fnv1.RunFunctionRequest, gvks [
 // Returns (resolver, xrSchema, nil) on success.
 // Returns (nil, nil, error) on fatal errors.
 func (f *Function) buildResolverFromCRDs(req *fnv1.RunFunctionRequest, gvks []schema.GroupVersionKind, xrGVK schema.GroupVersionKind) (resolver.SchemaResolver, *spec.Schema, error) {
-	requiredResources := req.GetRequiredResources()
+	requiredResources, err := request.GetRequiredResources(req)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "cannot get required resources")
+	}
 	if len(requiredResources) == 0 {
-		// Crossplane hasn't sent any CRDs yet.
+		// Crossplane hasn't sent any required resources yet.
 		return nil, nil, nil
 	}
 
 	crds := make([]*extv1.CustomResourceDefinition, 0, len(gvks))
 	for _, gvk := range gvks {
-		e, ok := requiredResources[gvk.String()]
+		resources, ok := requiredResources[gvk.String()]
 		if !ok {
 			// This GVK wasn't in the response - Crossplane might not have
 			// processed our requirements yet.
@@ -416,16 +447,19 @@ func (f *Function) buildResolverFromCRDs(req *fnv1.RunFunctionRequest, gvks []sc
 			return nil, nil, nil
 		}
 
-		if len(e.GetItems()) < 1 {
+		if len(resources) == 0 {
 			// Crossplane is telling us the CRD doesn't exist.
 			// This might be a built-in type without a CRD.
 			f.log.Debug("CRD unavailable", "gvk", gvk.String())
 			continue
 		}
 
+		// convert from the unstructured CRD to a strongly typed CRD. Note that
+		// we should only have at most one CRD for each GVK.
+		ucrd := resources[0].Resource.Object
 		crd := &extv1.CustomResourceDefinition{}
-		if err := resource.AsObject(e.GetItems()[0].GetResource(), crd); err != nil {
-			return nil, nil, errors.Wrapf(err, "cannot unmarshal CRD for %q", gvk)
+		if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(ucrd, crd); err != nil {
+			return nil, nil, errors.Wrapf(err, "cannot convert CRD for %q", gvk)
 		}
 
 		crds = append(crds, crd)
@@ -437,10 +471,11 @@ func (f *Function) buildResolverFromCRDs(req *fnv1.RunFunctionRequest, gvks []sc
 	}
 
 	// Create combined resolver from CRDs.
-	combinedResolver, err := schemaresolver.NewCombinedResolverFromCRDs(crds)
+	crdResolver, err := schemaresolver.NewCRDSchemaResolver(crds)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "cannot create schema resolver from CRDs")
 	}
+	combinedResolver := schemaresolver.NewCombinedResolverFromCRDs(crdResolver)
 
 	// Get XR schema from the combined resolver.
 	xrSchema, err := combinedResolver.ResolveSchema(xrGVK)
@@ -453,39 +488,6 @@ func (f *Function) buildResolverFromCRDs(req *fnv1.RunFunctionRequest, gvks []sc
 
 	f.log.Debug("Using required_resources CRD path")
 	return combinedResolver, xrSchema, nil
-}
-
-// RequiredSchemas returns the schema requirements for the given GVKs.
-// This tells Crossplane which OpenAPI schemas the function needs.
-func RequiredSchemas(gvks ...schema.GroupVersionKind) *fnv1.Requirements {
-	rq := &fnv1.Requirements{Schemas: map[string]*fnv1.SchemaSelector{}}
-
-	for _, gvk := range gvks {
-		rq.Schemas[gvk.String()] = &fnv1.SchemaSelector{
-			ApiVersion: gvk.GroupVersion().String(),
-			Kind:       gvk.Kind,
-		}
-	}
-
-	return rq
-}
-
-// RequiredCRDs returns the required CRDs this function requires to run.
-// This is the fallback path for older Crossplane versions that don't support required_schemas.
-func RequiredCRDs(gvks ...schema.GroupVersionKind) *fnv1.Requirements {
-	rq := &fnv1.Requirements{Resources: map[string]*fnv1.ResourceSelector{}}
-
-	for _, gvk := range gvks {
-		rq.Resources[gvk.String()] = &fnv1.ResourceSelector{
-			ApiVersion: "apiextensions.k8s.io/v1",
-			Kind:       "CustomResourceDefinition",
-			Match: &fnv1.ResourceSelector_MatchName{
-				MatchName: strings.ToLower(gvk.Kind + "s." + gvk.Group),
-			},
-		}
-	}
-
-	return rq
 }
 
 // externalRefSelectorsFromRuntime builds resource selectors for external references
@@ -501,6 +503,7 @@ func (f *Function) externalRefSelectorsFromRuntime(rt *runtime.Runtime, xrNamesp
 
 	for _, node := range rt.Nodes() {
 		if node.Spec.Meta.Type != graph.NodeTypeExternal {
+			// not an external ref, skip it
 			continue
 		}
 

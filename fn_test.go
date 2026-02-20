@@ -11,6 +11,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
+
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
@@ -72,16 +73,6 @@ func TestRunFunction(t *testing.T) {
 				rsp: &fnv1.RunFunctionResponse{
 					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
 					Requirements: &fnv1.Requirements{
-						Schemas: map[string]*fnv1.SchemaSelector{
-							"example.crossplane.io/v1, Kind=XBucket": {
-								ApiVersion: "example.crossplane.io/v1",
-								Kind:       "XBucket",
-							},
-							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
-								ApiVersion: "s3.aws.upbound.io/v1beta1",
-								Kind:       "Bucket",
-							},
-						},
 						Resources: map[string]*fnv1.ResourceSelector{
 							"example.crossplane.io/v1, Kind=XBucket": {
 								ApiVersion: "apiextensions.k8s.io/v1",
@@ -102,7 +93,7 @@ func TestRunFunction(t *testing.T) {
 			reason: "The desired XR should only contain status fields declared in the ResourceGraph, not the full observed XR",
 			args: args{
 				req: &fnv1.RunFunctionRequest{
-					Meta: &fnv1.RequestMeta{Tag: "test"},
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
 						"apiVersion": "kro.fn.crossplane.io/v1beta1",
 						"kind": "ResourceGraph",
@@ -229,18 +220,6 @@ func TestRunFunction(t *testing.T) {
 								Kind:       "Bucket",
 							},
 						},
-						Resources: map[string]*fnv1.ResourceSelector{
-							"example.crossplane.io/v1, Kind=XBucket": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "xbuckets.example.crossplane.io"},
-							},
-							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "buckets.s3.aws.upbound.io"},
-							},
-						},
 					},
 					Desired: &fnv1.State{
 						Composite: &fnv1.Resource{
@@ -272,7 +251,7 @@ func TestRunFunction(t *testing.T) {
 			reason: "Desired composed resources should only contain template fields, not fields from observed state like provider defaults",
 			args: args{
 				req: &fnv1.RunFunctionRequest{
-					Meta: &fnv1.RequestMeta{Tag: "test"},
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
 						"apiVersion": "kro.fn.crossplane.io/v1beta1",
 						"kind": "ResourceGraph",
@@ -414,18 +393,6 @@ func TestRunFunction(t *testing.T) {
 								Kind:       "Bucket",
 							},
 						},
-						Resources: map[string]*fnv1.ResourceSelector{
-							"example.crossplane.io/v1, Kind=XBucket": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "xbuckets.example.crossplane.io"},
-							},
-							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "buckets.s3.aws.upbound.io"},
-							},
-						},
 					},
 					Desired: &fnv1.State{
 						Composite: &fnv1.Resource{
@@ -462,7 +429,7 @@ func TestRunFunction(t *testing.T) {
 			reason: "External refs should be fetched and their data available in CEL expressions, but not included in desired output",
 			args: args{
 				req: &fnv1.RunFunctionRequest{
-					Meta: &fnv1.RequestMeta{Tag: "test"},
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
 						"apiVersion": "kro.fn.crossplane.io/v1beta1",
 						"kind": "ResourceGraph",
@@ -616,21 +583,6 @@ func TestRunFunction(t *testing.T) {
 							},
 						},
 						Resources: map[string]*fnv1.ResourceSelector{
-							"example.crossplane.io/v1, Kind=XBucket": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "xbuckets.example.crossplane.io"},
-							},
-							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "buckets.s3.aws.upbound.io"},
-							},
-							"/v1, Kind=ConfigMap": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "configmaps."},
-							},
 							"config": {
 								ApiVersion: "v1",
 								Kind:       "ConfigMap",
@@ -672,7 +624,7 @@ func TestRunFunction(t *testing.T) {
 			reason: "External refs should support CEL expressions that reference schema.spec fields",
 			args: args{
 				req: &fnv1.RunFunctionRequest{
-					Meta: &fnv1.RequestMeta{Tag: "test"},
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
 						"apiVersion": "kro.fn.crossplane.io/v1beta1",
 						"kind": "ResourceGraph",
@@ -833,21 +785,6 @@ func TestRunFunction(t *testing.T) {
 							},
 						},
 						Resources: map[string]*fnv1.ResourceSelector{
-							"example.crossplane.io/v1, Kind=XBucket": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "xbuckets.example.crossplane.io"},
-							},
-							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "buckets.s3.aws.upbound.io"},
-							},
-							"/v1, Kind=ConfigMap": {
-								ApiVersion: "apiextensions.k8s.io/v1",
-								Kind:       "CustomResourceDefinition",
-								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "configmaps."},
-							},
 							// Key assertion: the external ref name should be evaluated from CEL expression
 							// "${schema.spec.configMapName}" -> "my-platform-config"
 							"config": {
