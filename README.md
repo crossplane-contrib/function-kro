@@ -1,26 +1,92 @@
-# function-template-go
-[![CI](https://github.com/crossplane/function-template-go/actions/workflows/ci.yml/badge.svg)](https://github.com/crossplane/function-template-go/actions/workflows/ci.yml)
+# function-kro
 
-A template for writing a [composition function][functions] in [Go][go].
+A [Crossplane Composition Function][functions] that brings the [KRO][kro]
+(Kubernetes Resource Orchestrator) experience to Crossplane. Define complex,
+interdependent Kubernetes resources using [CEL][cel] expressions — all inline in
+your Crossplane Composition's function pipeline.
 
-To learn how to use this template:
+## Overview
 
-* [Follow the guide to writing a composition function in Go][function guide]
-* [Learn about how composition functions work][functions]
-* [Read the function-sdk-go package documentation][package docs]
+[KRO][kro] is a standalone Kubernetes controller for declarative resource
+orchestration. `function-kro` adapts KRO's approach to run as a Crossplane
+composition function, letting you combine KRO-style resource orchestration with
+other Crossplane functions in a single pipeline.
 
-If you just want to jump in and get started:
+`function-kro` supports the full set of upstream KRO features. See the
+[KRO documentation][kro-docs] for details on all available capabilities.
 
-1. Replace `function-template-go` with your function in `go.mod`,
-   `package/crossplane.yaml`, and any Go imports. (You can also do this
-   automatically by running the `./init.sh <function-name>` script.)
-1. Update `input/v1beta1/` to reflect your desired input (and run `go generate ./...`)
-1. Add your logic to `RunFunction` in `fn.go`
-1. Add tests for your logic in `fn_test.go`
-1. Update this file, `README.md`, to be about your function!
+## Usage
 
-This template uses [Go][go], [Docker][docker], and the [Crossplane CLI][cli] to
-build functions.
+Use `function-kro` as a step in a Crossplane Composition pipeline. The function
+takes a `ResourceGraph` input that defines your resources and their
+relationships using `${...}` CEL expressions:
+
+```yaml
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+spec:
+  compositeTypeRef:
+    apiVersion: example.crossplane.io/v1alpha1
+    kind: MyResource
+  mode: Pipeline
+  pipeline:
+  - step: kro
+    functionRef:
+      name: function-kro
+    input:
+      apiVersion: kro.fn.crossplane.io/v1beta1
+      kind: ResourceGraph
+      status:
+        vpcId: ${vpc.status.atProvider.id}
+      resources:
+      - id: vpc
+        template:
+          apiVersion: ec2.aws.upbound.io/v1beta1
+          kind: VPC
+          spec:
+            forProvider:
+              region: ${schema.spec.region}
+              cidrBlock: "10.0.0.0/16"
+      - id: subnet
+        template:
+          apiVersion: ec2.aws.upbound.io/v1beta1
+          kind: Subnet
+          spec:
+            forProvider:
+              region: ${schema.spec.region}
+              vpcId: ${vpc.status.atProvider.id}
+              cidrBlock: "10.0.1.0/24"
+```
+
+### CEL Expressions
+
+Expressions use `${...}` syntax within resource templates:
+
+- Reference the XR spec: `${schema.spec.region}`
+- Reference other resources' observed state: `${vpc.status.atProvider.id}`
+- Execute logic inline: `${schema.spec.replicas * 2}`, `arn:aws:s3:::${bucket.status.atProvider.id}`
+
+You don't need to manually order your resources or wire up dependencies.
+`function-kro` analyzes the expressions in your templates, builds a dependency
+graph (DAG), and automatically determines the correct order to create and
+reconcile resources. If a resource references another resource's status, it will
+wait until that dependency is ready before proceeding.
+
+## Examples
+
+See the [`example/`](example/) directory for complete working examples:
+
+| Example | Description |
+|---------|-------------|
+| [basic](example/basic/) | Resource dependencies and status aggregation |
+| [conditionals](example/conditionals/) | Conditional resource creation with `includeWhen` |
+| [readiness](example/readiness/) | Custom readiness conditions with `readyWhen` |
+| [externalref](example/externalref/) | Referencing existing cluster resources outside of the XR/composition |
+| [collections](example/collections/) | Dynamic resource expansion with `forEach` |
+
+See the [examples README](example/README.md) for setup instructions and walkthroughs.
+
+## Development
 
 ```shell
 # Run code generation - see input/generate.go
@@ -36,9 +102,11 @@ $ docker build . --tag=runtime
 $ crossplane xpkg build -f package --embed-runtime-image=runtime
 ```
 
-[functions]: https://docs.crossplane.io/latest/concepts/composition-functions
-[go]: https://go.dev
-[function guide]: https://docs.crossplane.io/knowledge-base/guides/write-a-composition-function-in-go
-[package docs]: https://pkg.go.dev/github.com/crossplane/function-sdk-go
-[docker]: https://www.docker.com
-[cli]: https://docs.crossplane.io/latest/cli
+## License
+
+Apache 2.0. See [LICENSE](LICENSE) for details.
+
+[functions]: https://docs.crossplane.io/latest/packages/functions/
+[kro]: https://kro.run
+[kro-docs]: https://kro.run/docs/overview
+[cel]: https://github.com/google/cel-go
