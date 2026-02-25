@@ -54,6 +54,35 @@ patches/
 
 **Goal:** Understand what changed upstream before touching any code.
 
+### Step 1.0: Validate Current Patches Documentation
+
+Before relying on `v{OLD}_PATCHES.md` as your migration guide, verify it actually matches the current codebase. Stale or inaccurate patch docs will cause you to apply wrong adaptations to the new version.
+
+**Checks:**
+
+1. **Verify documented signatures match actual code.** Spot-check key adaptations listed in the patches doc against the real source files:
+   - Builder constructor signature in `kro/graph/builder.go`
+   - `NewResourceGraphDefinition` signature in `kro/graph/builder.go`
+   - Runtime node methods in `kro/runtime/node.go`
+   - Combined resolver factories in `kro/graph/schema/resolver/resolver.go`
+
+2. **Verify "Files Removed" are actually absent.** Confirm that files listed as removed (e.g., `kro/graph/crd/`, `kro/metadata/owner_reference.go`) don't exist in the tree.
+
+3. **Verify "Files Added" actually exist.** Confirm that files listed as our additions (e.g., `schema_map_resolver.go`, `crd_resolver.go`) are present.
+
+4. **Check for undocumented changes.** Look for commits to `kro/` files made after the patches doc was last updated:
+   ```bash
+   # Find the last commit that touched the patches doc
+   git log -1 --format="%H %ci" -- patches/v{OLD}_PATCHES.md
+
+   # Find any kro/ changes after that date
+   git log --oneline --after="<date from above>" -- kro/
+   ```
+
+5. **If discrepancies are found:** Stop and report them to the user before proceeding. The patches doc is the source of truth for the adaptation step (Phase 3) — if it's wrong, the entire upgrade will apply wrong adaptations. Present the discrepancies clearly, update `v{OLD}_PATCHES.md` to reflect reality, and get user confirmation that the updated doc is accurate before continuing to Step 1.1.
+
+   **Do not skip this confirmation.** Even if the fixes seem obvious, the user may have context about why the code diverged from the doc (e.g., an intentional change that was never documented, or a work-in-progress that shouldn't be carried forward).
+
 ### Step 1.1: Review Release Notes
 
 Read the upstream release notes to understand the high-level changes:
@@ -477,14 +506,30 @@ the upgrade process. Squashing is optional and depends on team preference.
 | `kro/graph/schema/resolver/resolver.go` | Combined resolver constructors |
 | `kro/graph/schema/schema.go` | ObjectMetaSchema, DeepCopySchema |
 
-### Files We Don't Copy
+### What We Vendor (Allowlist)
 
-| Upstream Path | Reason |
-|---------------|--------|
-| `pkg/controller/` | Controller logic not needed |
-| `pkg/simpleschema/` | SimpleSchema not used (Crossplane provides schemas) |
-| `pkg/dynamiccontroller/` | Dynamic controller not needed |
-| `api/` | We have our own input types |
+**Guiding principle:** Function-kro only vendors KRO's graph-building, CEL evaluation, and runtime execution layers. Everything else (controllers, API types, test utilities) is replaced by Crossplane's composition function framework.
+
+These are the **only** upstream `pkg/` packages we copy:
+
+| Upstream Path | Our Path | What It Provides |
+|---------------|----------|------------------|
+| `pkg/graph/` | `kro/graph/` | Graph building, DAG, parsing, schema resolution, validation |
+| `pkg/cel/` | `kro/cel/` | CEL environment, AST inspection, custom libraries |
+| `pkg/runtime/` | `kro/runtime/` | Runtime execution, template resolution |
+| `pkg/metadata/` | `kro/metadata/` | Labels, finalizers, GVK utilities |
+
+**IMPORTANT: If upstream introduces a new `pkg/` directory, do NOT copy it** unless it is a subdirectory of one of the four packages above or you have explicitly evaluated that function-kro needs it. The default should be to skip unknown packages.
+
+Examples of upstream packages we skip (non-exhaustive):
+
+| Upstream Package | Why We Skip It |
+|------------------|----------------|
+| `api/` | We have our own input types (`input/v1beta1/`) |
+| `pkg/controller/` | Replaced by Crossplane function framework (`fn.go`) |
+| `pkg/simpleschema/` | Crossplane provides OpenAPI schemas directly |
+| `pkg/dynamiccontroller/` | Replaced by Crossplane function framework |
+| `pkg/testutil/` | Upstream test utilities tied to controller patterns we don't use |
 
 ---
 
