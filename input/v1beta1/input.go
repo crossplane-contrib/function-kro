@@ -7,15 +7,11 @@ package v1beta1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // KRODomainName is the base domain name for KRO resources.
 // This constant is used across the codebase for labels, finalizers, etc.
 const KRODomainName = "kro.run"
-
-// GroupVersion is group version used to register these objects.
-var GroupVersion = schema.GroupVersion{Group: "kro.fn.crossplane.io", Version: "v1beta1"}
 
 // This isn't a custom resource, in the sense that we never install its CRD.
 // It is a KRM-like object, so we generate a CRD to describe its schema.

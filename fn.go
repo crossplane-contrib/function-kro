@@ -44,7 +44,9 @@ type Function struct {
 }
 
 // RunFunction runs the Function.
-func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
+func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) { //nolint:gocognit // See below.
+	// This loop is fairly complex, but more readable with less abstraction.
+
 	f.log.Debug("Running function", "tag", req.GetMeta().GetTag(), "advertisesCapabilities", request.AdvertisesCapabilities(req), "capabilities", req.GetMeta().GetCapabilities())
 	rsp := response.To(req, response.DefaultTTL)
 
