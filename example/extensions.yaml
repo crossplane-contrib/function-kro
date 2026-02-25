@@ -11,7 +11,7 @@ kind: Function
 metadata:
   name: function-kro
 spec:
-  package: xpkg.upbound.io/jaredorg/function-kro:v0.0.24
+  package: xpkg.upbound.io/upbound/function-kro:v0.0.1
   runtimeConfigRef:
     apiVersion: pkg.crossplane.io/v1beta1
     kind: DeploymentRuntimeConfig
