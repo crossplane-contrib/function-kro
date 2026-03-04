@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"strconv"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -171,33 +170,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	// Group observed composed resources by their runtime node ID.
-	// For single resources, the composed resource name equals the node ID.
-	// For collections, the composed resource name uses the pattern "nodeID-N" (e.g., "subnets-0")
-	// and has the kro.run/collection-index label set.
-	observedByNodeID := make(map[string][]*unstructured.Unstructured)
-	for name, r := range ocds {
-		id := string(name)
-		// Try direct match first (single resources).
-		if _, ok := nodesByID[id]; ok {
-			observedByNodeID[id] = append(observedByNodeID[id], &r.Resource.Unstructured)
-			continue
-		}
-		// Check if this is a collection item (has collection-index label).
-		// If so, extract the node ID by stripping the "-N" suffix from the name.
-		if _, isCollectionItem := r.Resource.GetLabels()[metadata.CollectionIndexLabel]; isCollectionItem {
-			if idx := strings.LastIndex(id, "-"); idx > 0 {
-				baseID := id[:idx]
-				if node, ok := nodesByID[baseID]; ok && node.Spec.Meta.Type == graph.NodeTypeCollection {
-					// this resource is part of a collection, add it to the list of resources for its parent/base node
-					observedByNodeID[baseID] = append(observedByNodeID[baseID], &r.Resource.Unstructured)
-					continue
-				}
-			}
-		}
-		// This resource doesn't match any node - might be from a different function
-		// or a stale resource. Skip it.
-		f.log.Debug("Observed resource has no matching node", "name", name)
-	}
+	observedByNodeID := f.groupObservedByNodeID(ocds, nodesByID)
 
 	// Set observed state on each node so the KRO runtime has access to all its
 	// observed fields/values to use when evaluating expressions.
@@ -249,11 +222,12 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		// For single resources, desired has one element.
 		// For collections, desired has multiple elements (one per forEach expansion).
 		isCollection := node.Spec.Meta.Type == graph.NodeTypeCollection
-		for i, r := range desired {
+		for _, r := range desired {
 			resourceName := id
 			if isCollection {
-				// This resource is part of a collection: append index to make a unique composed resource name
-				resourceName = id + "-" + strconv.Itoa(i)
+				// This resource is part of a collection: append the resource's metadata.name
+				// to produce a stable composed resource name that doesn't depend on list order.
+				resourceName = id + "-" + r.GetName()
 			}
 
 			cd, err := composed.From(r)
@@ -542,6 +516,58 @@ func (f *Function) externalRefSelectorsFromRuntime(rt *runtime.Runtime, xrNamesp
 	}
 
 	return selectors, nil
+}
+
+// groupObservedByNodeID groups observed composed resources by their runtime
+// node ID. For single resources, the composed resource name equals the node ID.
+// For collections, the composed resource name uses the pattern
+// "collectionNodeID-metadataName" (e.g., "subnets-my-app-us-east-1") and has
+// the kro.run/collection-index label set.
+func (f *Function) groupObservedByNodeID(ocds map[resource.Name]resource.ObservedComposed, nodesByID map[string]*runtime.Node) map[string][]*unstructured.Unstructured {
+	observedByNodeID := make(map[string][]*unstructured.Unstructured)
+	for name, r := range ocds {
+		id := string(name) // ID is the same as the composed resource name
+		if _, ok := nodesByID[id]; ok {
+			// found a direct match node for this ID
+			observedByNodeID[id] = append(observedByNodeID[id], &r.Resource.Unstructured)
+			continue
+		}
+		if _, isCollectionItem := r.Resource.GetLabels()[metadata.CollectionIndexLabel]; isCollectionItem {
+			// this is a collection item, try to find its parent collection node
+			if parentNodeID := findCollectionNodeID(id, nodesByID); parentNodeID != "" {
+				// we found a matching collection parent, add this observed resource to its parent's list
+				observedByNodeID[parentNodeID] = append(observedByNodeID[parentNodeID], &r.Resource.Unstructured)
+				continue
+			}
+		}
+		// This resource doesn't match any node - might be from a different function
+		// or a stale resource. Skip it.
+		f.log.Debug("Observed resource has no matching node", "name", name)
+	}
+
+	return observedByNodeID
+}
+
+// findCollectionNodeID finds the collection node that owns a composed resource
+// by trying progressively shorter "-" delimited prefixes of the resource name.
+// This naturally finds the longest match and avoids ambiguity when one node ID
+// is a prefix of another (e.g., "bucket" vs "bucket-log").
+func findCollectionNodeID(id string, nodesByID map[string]*runtime.Node) string {
+	// try all segments of the ID from longest to shortest
+	for remaining := id; ; {
+		// find the next longest segment in the resource name
+		idx := strings.LastIndex(remaining, "-")
+		if idx <= 0 {
+			// no more segments to check, return empty
+			return ""
+		}
+		prefix := id[:idx]
+		if node, ok := nodesByID[prefix]; ok && node.Spec.Meta.Type == graph.NodeTypeCollection {
+			// we found a collection node parent that matches the name prefix of this collection item
+			return prefix
+		}
+		remaining = prefix
+	}
 }
 
 // StructToSpecSchema converts a protobuf Struct (as returned by Crossplane's
