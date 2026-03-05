@@ -1,12 +1,13 @@
 ---
 name: audit-patches
 description: Audit function-kro's patches documentation against the actual upstream KRO diff. Validates that v*_PATCHES.md accurately documents all modifications, additions, and exclusions.
-disable-model-invocation: true
-arguments: upstream-tag (e.g., v0.8.3)
+arguments: [upstream-tag]
 !command: ./scripts/diff-upstream-kro.sh -s -r $ARGUMENTS
 ---
 
 # Audit Patches Skill
+
+**STOP CHECK:** If "$ARGUMENTS" is empty or was not provided, do NOT proceed. Tell the user: "This skill requires an upstream KRO tag. Usage: `/audit-patches v0.8.3`" and stop immediately.
 
 You are auditing function-kro's patches documentation against the actual upstream KRO code. The diff summary output from `./scripts/diff-upstream-kro.sh -s -r $ARGUMENTS` has been pre-injected above this prompt.
 

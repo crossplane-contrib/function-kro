@@ -1,12 +1,13 @@
 ---
 name: review-kro-adaptations
 description: Principal-level engineering review of all function-kro adaptations to upstream KRO code. Assesses quality, minimality, correctness, and maintainability of every change we've made.
-disable-model-invocation: true
-arguments: upstream-tag (e.g., v0.8.3)
+arguments: [upstream-tag]
 !command: ./scripts/diff-upstream-kro.sh -s -r $ARGUMENTS
 ---
 
 # Review KRO Adaptations Skill
+
+**STOP CHECK:** If "$ARGUMENTS" is empty or was not provided, do NOT proceed. Tell the user: "This skill requires an upstream KRO tag. Usage: `/review-kro-adaptations v0.8.3`" and stop immediately.
 
 You are performing a principal-level engineering review of every adaptation function-kro has made to upstream KRO code. The diff summary from `./scripts/diff-upstream-kro.sh -s -r $ARGUMENTS` has been pre-injected above.
 
