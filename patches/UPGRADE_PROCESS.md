@@ -58,19 +58,37 @@ patches/
 
 Before relying on `v{OLD}_PATCHES.md` as your migration guide, verify it actually matches the current codebase. Stale or inaccurate patch docs will cause you to apply wrong adaptations to the new version.
 
-**Checks:**
+**Preferred method — use the `/audit-patches` skill:**
 
-1. **Verify documented signatures match actual code.** Spot-check key adaptations listed in the patches doc against the real source files:
-   - Builder constructor signature in `kro/graph/builder.go`
-   - `NewResourceGraphDefinition` signature in `kro/graph/builder.go`
-   - Runtime node methods in `kro/runtime/node.go`
-   - Combined resolver factories in `kro/graph/schema/resolver/resolver.go`
+```
+/audit-patches v{OLD}
+```
 
-2. **Verify "Files Removed" are actually absent.** Confirm that files listed as removed (e.g., `kro/graph/crd/`, `kro/metadata/owner_reference.go`) don't exist in the tree.
+This skill automates the entire validation process: runs the diff script, cross-references every file against the patches doc, deep-dives each modification, fixes any discrepancies, and produces a structured audit report. It is the recommended way to validate patches documentation.
 
-3. **Verify "Files Added" actually exist.** Confirm that files listed as our additions (e.g., `schema_map_resolver.go`, `crd_resolver.go`) are present.
+**Manual fallback** (if the skill is unavailable or you need to debug):
 
-4. **Check for undocumented changes.** Look for commits to `kro/` files made after the patches doc was last updated:
+Run the diff script — this is the source of truth for what we've actually changed:
+
+```bash
+# Summary: which files are identical, modified, local-only, or upstream-only
+./scripts/diff-upstream-kro.sh -s -r v{OLD}
+
+# Full diff of a specific file
+./scripts/diff-upstream-kro.sh -f graph/builder.go -r v{OLD}
+```
+
+Then verify the patches doc against the script output:
+
+1. **Every `[MODIFIED]` file from the script should be documented** in `v{OLD}_PATCHES.md`. If a file shows as modified but isn't in the doc, the doc is incomplete.
+
+2. **Every `[LOCAL ONLY]` file should be in the "Files Added" table.** If a local-only file isn't documented, add it.
+
+3. **Every `[IDENTICAL]` file should NOT be listed as modified** in the patches doc. If the doc claims a file was modified but the script shows it's identical, the doc is wrong.
+
+4. **Every `[UPSTREAM ONLY]` file in a vendored package** should be in the "Files Removed" table or intentionally excluded.
+
+5. **Check for undocumented changes since the doc was last updated:**
    ```bash
    # Find the last commit that touched the patches doc
    git log -1 --format="%H %ci" -- patches/v{OLD}_PATCHES.md
@@ -79,7 +97,7 @@ Before relying on `v{OLD}_PATCHES.md` as your migration guide, verify it actuall
    git log --oneline --after="<date from above>" -- kro/
    ```
 
-5. **If discrepancies are found:** Stop and report them to the user before proceeding. The patches doc is the source of truth for the adaptation step (Phase 3) — if it's wrong, the entire upgrade will apply wrong adaptations. Present the discrepancies clearly, update `v{OLD}_PATCHES.md` to reflect reality, and get user confirmation that the updated doc is accurate before continuing to Step 1.1.
+6. **If discrepancies are found:** Stop and report them to the user before proceeding. The patches doc is the source of truth for the adaptation step (Phase 3) — if it's wrong, the entire upgrade will apply wrong adaptations. Present the discrepancies clearly, update `v{OLD}_PATCHES.md` to reflect reality, and get user confirmation that the updated doc is accurate before continuing to Step 1.1.
 
    **Do not skip this confirmation.** Even if the fixes seem obvious, the user may have context about why the code diverged from the doc (e.g., an intentional change that was never documented, or a work-in-progress that shouldn't be carried forward).
 
@@ -207,16 +225,26 @@ commits will show exactly what we modified.
 
 ### Step 2.3: Fix Import Paths
 
-Upstream uses `github.com/kubernetes-sigs/kro/pkg/...` but we use `github.com/upbound/function-kro/kro/...`:
+Upstream uses `github.com/kubernetes-sigs/kro/pkg/...` (or `sigs.k8s.io/kro/pkg/...` if they changed their module path) but we use `github.com/upbound/function-kro/kro/...`:
 
 ```bash
-# Update import paths in copied files
+# Update import paths in copied files (handle both possible upstream module paths)
 find kro/ -name "*.go" -exec sed -i '' \
     's|github.com/kubernetes-sigs/kro/pkg/|github.com/upbound/function-kro/kro/|g' {} \;
+find kro/ -name "*.go" -exec sed -i '' \
+    's|sigs.k8s.io/kro/pkg/|github.com/upbound/function-kro/kro/|g' {} \;
 
 # Also update any api/ imports if present
+# IMPORTANT: This also handles the v1alpha1 → v1beta1 version change
+find kro/ -name "*.go" -exec sed -i '' \
+    's|github.com/kubernetes-sigs/kro/api/v1alpha1|github.com/upbound/function-kro/input/v1beta1|g' {} \;
+find kro/ -name "*.go" -exec sed -i '' \
+    's|sigs.k8s.io/kro/api/v1alpha1|github.com/upbound/function-kro/input/v1beta1|g' {} \;
+# Handle any other api/ subpaths that aren't version-specific
 find kro/ -name "*.go" -exec sed -i '' \
     's|github.com/kubernetes-sigs/kro/api/|github.com/upbound/function-kro/input/|g' {} \;
+find kro/ -name "*.go" -exec sed -i '' \
+    's|sigs.k8s.io/kro/api/|github.com/upbound/function-kro/input/|g' {} \;
 ```
 
 **COMMIT CHECKPOINT 2: Import paths fixed**
@@ -305,9 +333,9 @@ Tasks:
 4. Do NOT blindly copy old code - understand the intent and apply appropriately
 
 Key adaptations to re-apply:
-- Builder constructor: Accept (resolver, restMapper) instead of (clientConfig, httpClient)
+- Builder constructor: Accept (resolver) instead of (clientConfig, httpClient)
 - NewResourceGraphDefinition: Accept (ResourceGraph, *spec.Schema) instead of full RGD CR
-- REST mapping fallback when restMapper is nil
+- Namespace scope inferred from template (no RESTMapper needed)
 - ObjectMeta schema injection in schema resolution paths
 - Schema resolution via SchemaMapResolver and CRDSchemaResolver
 
@@ -329,7 +357,7 @@ chore(upgrade): apply function-kro adaptations to v{NEW}
 Re-applied adaptations for Crossplane function compatibility:
 - Modified Builder constructor to accept resolver instead of clientConfig
 - Updated NewResourceGraphDefinition to accept schema parameter
-- Added REST mapping fallback for nil restMapper
+- Namespace scope inferred from template (no RESTMapper)
 - Injected ObjectMeta schema in resolution paths
 - [Add any new adaptations specific to this version]
 
@@ -500,11 +528,26 @@ the upgrade process. Squashing is optional and depends on team preference.
 
 ### Files We Modify
 
+Based on the v0.8.3 audit, these are all files we modify from upstream:
+
 | File | Adaptation |
 |------|------------|
-| `kro/graph/builder.go` | Constructor accepts resolver; NewResourceGraphDefinition accepts schema |
-| `kro/graph/schema/resolver/resolver.go` | Combined resolver constructors |
-| `kro/graph/schema/schema.go` | ObjectMetaSchema, DeepCopySchema |
+| `kro/graph/builder.go` | Constructor accepts resolver; NewResourceGraphDefinition accepts schema; remove SimpleSchema/CRD gen; remove REST mapper |
+| `kro/graph/node.go` | Remove `GVR` and `Namespaced` from NodeMeta |
+| `kro/graph/validation.go` | API type adaptation; remove `validateResourceGraphDefinitionNamingConventions` and `validateTemplateConstraints` |
+| `kro/graph/schema/resolver/resolver.go` | Add combined resolver factories and `combinedResolver` type |
+| `kro/graph/schema/schema.go` | Add `DeepCopySchema` |
+| `kro/runtime/node.go` | Remove `normalizeNamespaces` and all namespace auto-defaulting |
+| `kro/metadata/finalizers.go` | Import path change |
+| `kro/metadata/labels.go` | Import path change |
+| `kro/metadata/groupversion.go` | Import path change; remove `GetResourceGraphDefinitionInstanceGVR` |
+
+### Files We Intentionally Exclude
+
+| Upstream File | Reason |
+|---------------|--------|
+| `graph/crd/*` (6 files) | CRD synthesis/compat — function-kro doesn't generate CRDs |
+| `metadata/owner_reference.go` | Owner reference helpers — Crossplane manages resource ownership |
 
 ### What We Vendor (Allowlist)
 
