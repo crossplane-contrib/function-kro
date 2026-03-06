@@ -301,6 +301,42 @@ during the copy operation. The codebase likely won't compile yet.
 
 **Goal:** Make the new upstream code work with Crossplane's function model.
 
+### Mindset: Intelligent Merging, Not Mechanical Pasting
+
+**CRITICAL:** Start from the new upstream code and ask "what does this need to work in our context?" — NOT "where do I paste our old changes?" The patches doc records what we changed *last time*, but the new upstream may have evolved in ways that change what's needed.
+
+Every adaptation we maintain exists to bridge a specific gap between upstream's assumptions (Kubernetes controller with API server access) and our runtime environment (Crossplane composition function with no API access). The question for each adaptation during upgrade is: **does this gap still exist in the new code?**
+
+#### Principles
+
+1. **Evaluate each adaptation independently against the new code.** For each one, ask:
+   - Did upstream add extension points (interfaces, options, hooks) that make this adaptation unnecessary?
+   - Did upstream refactor so the adaptation needs to land in a different place or look different?
+   - Did upstream add new functionality in the same area that our old code would silently break or overwrite?
+   - Is the gap smaller now — maybe we only need half the old adaptation?
+
+2. **Prefer upstream's solution when one exists.** If upstream added a way to inject a `SchemaResolver`, use that — don't replace their constructor with ours. Less divergence is always better. Our old adaptation was the best solution *at the time*; the new upstream may offer a better one.
+
+3. **Preserve upstream improvements in code we modify.** If upstream added better error handling, validation, or edge case coverage in a function we rewrite, our replacement should incorporate those improvements, not overwrite them with our old version. Read the new code carefully before replacing it.
+
+4. **Watch for new gaps.** If upstream added a new feature that calls the REST mapper or requires API access, that needs a *new* adaptation — not just re-applying old ones. The patches doc won't mention these because they didn't exist before.
+
+5. **The adaptation surface should shrink over time, not grow.** Each upgrade is a chance to reduce divergence. If upstream moved closer to what we need, take advantage of it.
+
+#### Decision Framework
+
+For each adaptation in the old patches doc, the outcome is one of:
+
+| Outcome | When | Action |
+|---------|------|--------|
+| **Same** | Gap still exists, same location | Apply, adapted to surrounding code changes |
+| **Moved** | Gap still exists, code restructured | Find new location, apply the *intent* there |
+| **Shrunk** | Upstream partially solved it | Only apply what's still necessary |
+| **Gone** | Upstream eliminated the gap | Drop the adaptation entirely |
+| **Grown** | New upstream code has the same gap | Extend adaptation to cover new code too |
+
+**The patches doc documents WHAT we changed. You must reason about WHY we changed it and whether that WHY still applies.**
+
 ### Step 3.1: Identify Compilation Errors
 
 ```bash
@@ -314,7 +350,7 @@ This will show what broke. Common issues:
 
 ### Step 3.2: Apply Adaptations
 
-Using the previous `v{OLD}_PATCHES.md` as a guide, re-apply each adaptation:
+Using the previous `v{OLD}_PATCHES.md` as a guide and the "Intelligent Merging" principles above, adapt the new upstream code to work in our context.
 
 **AI Agent Prompt for Adaptations:**
 ```
@@ -323,28 +359,35 @@ I'm upgrading function-kro from KRO v{OLD} to v{NEW}.
 Context files:
 1. patches/v{OLD}_PATCHES.md - Our previous adaptations and their intent
 2. patches/v{OLD}_to_v{NEW}_CHANGES.md - What changed upstream
-3. fn.go - Our Crossplane function entry point
-4. Current compilation errors from `go build`
+3. patches/UPGRADE_PROCESS.md - Read the "Intelligent Merging" section carefully
+4. fn.go - Our Crossplane function entry point
+5. Current compilation errors from `go build`
 
-Tasks:
-1. Re-apply the adaptations from v{OLD}_PATCHES.md to the new code
-2. For each adaptation, check if the upstream API changed and adapt accordingly
-3. If upstream added new features (like forEach), integrate them
-4. Do NOT blindly copy old code - understand the intent and apply appropriately
+IMPORTANT: Do NOT blindly paste old adaptation code into the new upstream.
+For EACH adaptation in v{OLD}_PATCHES.md:
+1. Read the NEW upstream code in that area first
+2. Understand WHY the adaptation existed (what gap it bridges)
+3. Check if upstream already solved the problem (new interfaces, options, etc.)
+4. Decide the outcome: Same / Moved / Shrunk / Gone / Grown
+5. Only then write the adaptation — tailored to the new code, not copied from the old
 
-Key adaptations to re-apply:
-- Builder constructor: Accept (resolver) instead of (clientConfig, httpClient)
-- NewResourceGraphDefinition: Accept (ResourceGraph, *spec.Schema) instead of full RGD CR
-- Namespace scope inferred from template (no RESTMapper needed)
-- ObjectMeta schema injection in schema resolution paths
-- Schema resolution via SchemaMapResolver and CRDSchemaResolver
+The fundamental gaps we bridge (these are the WHYs):
+- No API server access: no REST mapper, no dynamic client, no CRD fetching
+- Schema from Crossplane: XR schema arrives as *spec.Schema, not via SimpleSchema
+- No CRD generation: Crossplane manages the XR CRD, not us
+- No namespace defaulting: Crossplane handles namespace assignment
+- Input type differences: our ResourceGraph vs upstream's ResourceGraphDefinition CR
 
-After fixing compilation, also do the following
+If upstream added extension points or restructured code to make any of these
+gaps smaller, prefer upstream's approach over our old adaptation.
 
-- run code generation to update generated methods and CRD schemas:
-go generate ./...
+If upstream added NEW code that has the same gaps (e.g., a new function that
+calls the REST mapper), that needs a NEW adaptation not in the old patches doc.
 
-- run tests and fix any failures
+After applying adaptations:
+- Run `go generate ./...` to update generated methods and CRD schemas
+- Run `go build ./...` to verify compilation
+- Run `go test ./...` and fix any failures
 ```
 
 **COMMIT CHECKPOINT 4: Adaptations applied**
@@ -385,6 +428,8 @@ Create `v{NEW}_PATCHES.md` documenting:
 - All adaptations (carried forward + new)
 - Any changes to the adaptation approach
 - New features and how they're integrated
+- Adaptations that were **dropped** because upstream eliminated the gap (record why — this is valuable for future upgrades)
+- Adaptations that **changed shape** because upstream restructured the code (record what's different and why)
 
 **COMMIT CHECKPOINT 5: Documentation updated**
 
