@@ -41,7 +41,7 @@ spec:
           spec:
             forProvider:
               region: ${schema.spec.region}
-              availabilityZone: us-west-2a
+              availabilityZone: ${schema.spec.region + "a"}
               cidrBlock: 192.168.0.0/18
               vpcId: ${vpc.status.atProvider.id}
       - id: subnetAZB
@@ -52,7 +52,7 @@ spec:
           spec:
             forProvider:
               region: ${schema.spec.region}
-              availabilityZone: us-west-2b
+              availabilityZone: ${schema.spec.region + "b"}
               cidrBlock: 192.168.64.0/18
               vpcId: ${vpc.status.atProvider.id}
       - id: subnetAZC
@@ -63,7 +63,7 @@ spec:
           spec:
             forProvider:
               region: ${schema.spec.region}
-              availabilityZone: us-west-2c
+              availabilityZone: ${schema.spec.region + "c"}
               cidrBlock: 192.168.128.0/18
               vpcId: ${vpc.status.atProvider.id}
       - id: securityGroup
