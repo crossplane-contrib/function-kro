@@ -1,25 +1,31 @@
 # function-kro
 
-A [Crossplane Composition Function][functions] that brings the [KRO][kro]
-(Kubernetes Resource Orchestrator) experience to Crossplane. Define complex,
-interdependent Kubernetes resources using [CEL][cel] expressions — all inline in
-your Crossplane Composition's function pipeline.
+A [Crossplane Composition Function][functions] for YAML+[CEL][cel] resource
+composition that implements the same syntax and experience provided by
+[KRO][kro] (Kubernetes Resource Orchestrator). Define complex, interdependent
+Kubernetes resources using CEL expressions — all inline in your Crossplane
+Composition's function pipeline.
 
 ## Overview
 
-[KRO][kro] is a standalone Kubernetes controller for declarative resource
-orchestration. `function-kro` adapts KRO's approach to run as a Crossplane
-composition function, letting you combine KRO-style resource orchestration with
-other Crossplane functions in a single pipeline.
+`function-kro` is a Crossplane composition function for declarative resource
+orchestration. It adapts [KRO][kro]'s approach to run inside Crossplane, letting
+you combine CEL-based resource definitions with other Crossplane functions in a
+single pipeline.
 
-`function-kro` supports the full set of upstream KRO features. See the
-[KRO documentation][kro-docs] for details on all available capabilities.
+There is no need to install KRO itself — `function-kro` natively embeds KRO's
+graph builder, CEL evaluator, and runtime engine with full feature parity. See
+the [KRO documentation][kro-docs] for details on all available capabilities.
 
 ## Usage
 
 Use `function-kro` as a step in a Crossplane Composition pipeline. The function
 takes a `ResourceGraph` input that defines your resources and their
-relationships using `${...}` CEL expressions:
+relationships using `${...}` CEL expressions.
+
+If you already have KRO resource definitions, the `resources` and `status`
+blocks are identical to what you'd write in a standalone KRO
+`ResourceGraphDefinition` — they drop into the pipeline input without changes.
 
 ```yaml
 apiVersion: apiextensions.crossplane.io/v1
@@ -57,6 +63,27 @@ spec:
               vpcId: ${vpc.status.atProvider.id}
               cidrBlock: "10.0.1.0/24"
 ```
+
+## Why Crossplane?
+
+Running resource definitions inside Crossplane's architecture adds capabilities
+that come with the platform:
+
+- **Pipeline composability.** Add functions from a broad ecosystem of pipeline
+  steps alongside your resource definitions. Enforce policy, inject tags, pull
+  secrets, or call external APIs — each as an independent pipeline step that
+  adds functionality while leaving your resource definitions untouched.
+- **Safe rollouts.** CompositionRevisions let you pin existing instances to a
+  known-good revision, roll forward incrementally, and roll back without a
+  rewrite.
+- **Multi-implementation APIs.** Define one API backed by multiple Compositions.
+  The same API schema can have separate AWS, GCP, and Azure implementations
+  behind it.
+- **Operational controls.** Pause reconciliation, set management policies, and
+  control resource lifecycle per-instance without touching the Composition.
+- **Developer experience.** Test and validate locally with `crossplane render`,
+  [diff][crossplane-diff] against a live environment, and run unit and
+  integration tests before deploying.
 
 ### CEL Expressions
 
@@ -102,6 +129,13 @@ $ docker build . --tag=runtime
 $ crossplane xpkg build -f package --embed-runtime-image=runtime
 ```
 
+## Contributing
+
+We welcome contributions of all kinds — opening issues, improving documentation,
+fixing bugs, or adding new features. If you don't know where to start or have
+any questions, please reach out to us on the `#function-kro` channel on
+Crossplane's [Slack][slack].
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE) for details.
@@ -110,3 +144,5 @@ Apache 2.0. See [LICENSE](LICENSE) for details.
 [kro]: https://kro.run
 [kro-docs]: https://kro.run/docs/overview
 [cel]: https://github.com/google/cel-go
+[crossplane-diff]: https://github.com/crossplane-contrib/crossplane-diff
+[slack]: https://slack.crossplane.io
