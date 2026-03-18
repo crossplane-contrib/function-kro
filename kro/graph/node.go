@@ -19,7 +19,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/upbound/function-kro/kro/graph/variable"
+	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
 
 // Well-known node/variable identifiers used in CEL expressions.

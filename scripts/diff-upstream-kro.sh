@@ -48,11 +48,11 @@ CLEANUP_TEMP=false
 UPSTREAM_REPO="https://github.com/kubernetes-sigs/kro.git"
 
 # Import path mappings (local -> upstream patterns)
-LOCAL_IMPORT_PREFIX="github.com/upbound/function-kro/kro"
+LOCAL_IMPORT_PREFIX="github.com/crossplane-contrib/function-kro/kro"
 UPSTREAM_IMPORT_PREFIX="sigs.k8s.io/kro/pkg"
 
 # Input type import path mappings (we use input/v1beta1, upstream uses api/v1alpha1)
-LOCAL_INPUT_PREFIX="github.com/upbound/function-kro/input/v1beta1"
+LOCAL_INPUT_PREFIX="github.com/crossplane-contrib/function-kro/input/v1beta1"
 UPSTREAM_INPUT_PREFIX="sigs.k8s.io/kro/api/v1alpha1"
 
 # Upstream packages we vendor (only show upstream-only files from these)

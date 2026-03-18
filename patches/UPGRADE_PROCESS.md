@@ -225,26 +225,26 @@ commits will show exactly what we modified.
 
 ### Step 2.3: Fix Import Paths
 
-Upstream uses `github.com/kubernetes-sigs/kro/pkg/...` (or `sigs.k8s.io/kro/pkg/...` if they changed their module path) but we use `github.com/upbound/function-kro/kro/...`:
+Upstream uses `github.com/kubernetes-sigs/kro/pkg/...` (or `sigs.k8s.io/kro/pkg/...` if they changed their module path) but we use `github.com/crossplane-contrib/function-kro/kro/...`:
 
 ```bash
 # Update import paths in copied files (handle both possible upstream module paths)
 find kro/ -name "*.go" -exec sed -i '' \
-    's|github.com/kubernetes-sigs/kro/pkg/|github.com/upbound/function-kro/kro/|g' {} \;
+    's|github.com/kubernetes-sigs/kro/pkg/|github.com/crossplane-contrib/function-kro/kro/|g' {} \;
 find kro/ -name "*.go" -exec sed -i '' \
-    's|sigs.k8s.io/kro/pkg/|github.com/upbound/function-kro/kro/|g' {} \;
+    's|sigs.k8s.io/kro/pkg/|github.com/crossplane-contrib/function-kro/kro/|g' {} \;
 
 # Also update any api/ imports if present
 # IMPORTANT: This also handles the v1alpha1 → v1beta1 version change
 find kro/ -name "*.go" -exec sed -i '' \
-    's|github.com/kubernetes-sigs/kro/api/v1alpha1|github.com/upbound/function-kro/input/v1beta1|g' {} \;
+    's|github.com/kubernetes-sigs/kro/api/v1alpha1|github.com/crossplane-contrib/function-kro/input/v1beta1|g' {} \;
 find kro/ -name "*.go" -exec sed -i '' \
-    's|sigs.k8s.io/kro/api/v1alpha1|github.com/upbound/function-kro/input/v1beta1|g' {} \;
+    's|sigs.k8s.io/kro/api/v1alpha1|github.com/crossplane-contrib/function-kro/input/v1beta1|g' {} \;
 # Handle any other api/ subpaths that aren't version-specific
 find kro/ -name "*.go" -exec sed -i '' \
-    's|github.com/kubernetes-sigs/kro/api/|github.com/upbound/function-kro/input/|g' {} \;
+    's|github.com/kubernetes-sigs/kro/api/|github.com/crossplane-contrib/function-kro/input/|g' {} \;
 find kro/ -name "*.go" -exec sed -i '' \
-    's|sigs.k8s.io/kro/api/|github.com/upbound/function-kro/input/|g' {} \;
+    's|sigs.k8s.io/kro/api/|github.com/crossplane-contrib/function-kro/input/|g' {} \;
 ```
 
 **COMMIT CHECKPOINT 2: Import paths fixed**
@@ -255,8 +255,8 @@ git commit -m "$(cat <<'EOF'
 chore(upgrade): fix import paths for function-kro
 
 Mechanical transformation of import paths:
-- github.com/kubernetes-sigs/kro/pkg/ → github.com/upbound/function-kro/kro/
-- github.com/kubernetes-sigs/kro/api/ → github.com/upbound/function-kro/input/
+- github.com/kubernetes-sigs/kro/pkg/ → github.com/crossplane-contrib/function-kro/kro/
+- github.com/kubernetes-sigs/kro/api/ → github.com/crossplane-contrib/function-kro/input/
 
 No functional changes, just import path updates.
 EOF

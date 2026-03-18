@@ -28,11 +28,11 @@ import (
 	"github.com/crossplane/function-sdk-go/resource/composite"
 	"github.com/crossplane/function-sdk-go/response"
 
-	"github.com/upbound/function-kro/input/v1beta1"
-	"github.com/upbound/function-kro/kro/graph"
-	schemaresolver "github.com/upbound/function-kro/kro/graph/schema/resolver"
-	"github.com/upbound/function-kro/kro/metadata"
-	"github.com/upbound/function-kro/kro/runtime"
+	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	"github.com/crossplane-contrib/function-kro/kro/graph"
+	schemaresolver "github.com/crossplane-contrib/function-kro/kro/graph/schema/resolver"
+	"github.com/crossplane-contrib/function-kro/kro/metadata"
+	"github.com/crossplane-contrib/function-kro/kro/runtime"
 )
 
 // Function returns whatever response you ask it to.

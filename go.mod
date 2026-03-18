@@ -1,4 +1,4 @@
-module github.com/upbound/function-kro
+module github.com/crossplane-contrib/function-kro
 
 go 1.25.7
 

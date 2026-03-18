@@ -26,7 +26,7 @@ import (
 	"k8s.io/apiserver/pkg/cel/openapi"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"github.com/upbound/function-kro/kro/cel/library"
+	"github.com/crossplane-contrib/function-kro/kro/cel/library"
 )
 
 // EnvOption is a function that modifies the environment options.

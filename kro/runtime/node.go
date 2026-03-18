@@ -21,10 +21,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	krocel "github.com/upbound/function-kro/kro/cel"
-	"github.com/upbound/function-kro/kro/graph"
-	"github.com/upbound/function-kro/kro/graph/variable"
-	"github.com/upbound/function-kro/kro/runtime/resolver"
+	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
+	"github.com/crossplane-contrib/function-kro/kro/graph"
+	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
+	"github.com/crossplane-contrib/function-kro/kro/runtime/resolver"
 )
 
 // Node is the mutable runtime handle that wraps an immutable graph.Node.

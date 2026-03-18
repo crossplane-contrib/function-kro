@@ -17,7 +17,7 @@ package graph
 import (
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	"github.com/upbound/function-kro/kro/graph/dag"
+	"github.com/crossplane-contrib/function-kro/kro/graph/dag"
 )
 
 // Graph represents a processed ResourceGraphDefinition.

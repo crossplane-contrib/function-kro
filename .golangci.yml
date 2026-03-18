@@ -269,7 +269,7 @@ formatters:
         - default
         - prefix(github.com/crossplane/crossplane-runtime)
         - prefix(github.com/crossplane/function-sdk-go)
-        - prefix(github.com/upbound/function-kro)
+        - prefix(github.com/crossplane-contrib/function-kro)
         - blank
         - dot
       custom-order: true

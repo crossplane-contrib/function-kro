@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/upbound/function-kro/kro/graph/fieldpath"
-	"github.com/upbound/function-kro/kro/graph/variable"
+	"github.com/crossplane-contrib/function-kro/kro/graph/fieldpath"
+	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
 
 // ResolutionResult represents the result of resolving a single expression.

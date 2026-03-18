@@ -21,7 +21,7 @@ import (
 
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"github.com/upbound/function-kro/kro/graph/variable"
+	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
 
 const (

@@ -14,7 +14,7 @@
 
 package runtime
 
-import "github.com/upbound/function-kro/kro/graph/variable"
+import "github.com/crossplane-contrib/function-kro/kro/graph/variable"
 
 // expressionEvaluationState tracks per-expression evaluation state.
 // Expressions are cached globally and shared via pointers - if the same

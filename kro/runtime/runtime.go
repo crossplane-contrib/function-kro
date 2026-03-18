@@ -17,8 +17,8 @@ package runtime
 import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/upbound/function-kro/kro/graph"
-	"github.com/upbound/function-kro/kro/graph/variable"
+	"github.com/crossplane-contrib/function-kro/kro/graph"
+	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
 
 // Compile-time check: Runtime must implement Interface.

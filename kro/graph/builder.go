@@ -27,15 +27,15 @@ import (
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"github.com/upbound/function-kro/input/v1beta1"
-	krocel "github.com/upbound/function-kro/kro/cel"
-	"github.com/upbound/function-kro/kro/cel/ast"
-	"github.com/upbound/function-kro/kro/graph/dag"
-	"github.com/upbound/function-kro/kro/graph/fieldpath"
-	"github.com/upbound/function-kro/kro/graph/parser"
-	kroschema "github.com/upbound/function-kro/kro/graph/schema"
-	"github.com/upbound/function-kro/kro/graph/variable"
-	"github.com/upbound/function-kro/kro/metadata"
+	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
+	"github.com/crossplane-contrib/function-kro/kro/cel/ast"
+	"github.com/crossplane-contrib/function-kro/kro/graph/dag"
+	"github.com/crossplane-contrib/function-kro/kro/graph/fieldpath"
+	"github.com/crossplane-contrib/function-kro/kro/graph/parser"
+	kroschema "github.com/crossplane-contrib/function-kro/kro/graph/schema"
+	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
+	"github.com/crossplane-contrib/function-kro/kro/metadata"
 )
 
 // NewBuilder creates a new GraphBuilder instance from a SchemaResolver.

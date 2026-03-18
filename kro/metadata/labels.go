@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/release-utils/version"
 
-	"github.com/upbound/function-kro/input/v1beta1"
+	"github.com/crossplane-contrib/function-kro/input/v1beta1"
 )
 
 const (
