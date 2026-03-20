@@ -1,0 +1,32 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: coolsecret-core
+spec:
+  compositeTypeRef:
+    apiVersion: core.example.crossplane.io/v1
+    kind: CoolSecret
+  mode: Pipeline
+  pipeline:
+  - step: kro-run
+    functionRef:
+      name: function-kro
+    input:
+      apiVersion: kro.fn.crossplane.io/v1beta1
+      kind: ResourceGraph
+      resources:
+      # Secret is always ready.
+      - id: secret
+        readyWhen:
+          - ${true}
+        template:
+          apiVersion: v1
+          kind: Secret
+          metadata: {}
+          stringData:
+            secretField: ${schema.spec.secretField}
+
+# note there is no step with function-auto-ready in this pipeline because we are
+# exclusively using readyWhen statements for each resource. Crossplane will
+# detect that the parent XR is ready when all composed resources have their
+# ready state set to true in the function pipeline via the readyWhen statements.

@@ -329,17 +329,44 @@ Inspect the VPC again to see `enableDnsHostnames` appear in `forProvider`:
 ```shell
 kubectl get vpc.ec2.aws.m.upbound.io -l crossplane.io/composite=cool-network -o json | jq '.items[0].spec.forProvider'
 ```
-
 ### Clean-up
 
 ```shell
 kubectl delete -f omit/xr.yaml
+kubectl delete -f omit/composition.yaml
+kubectl delete -f omit/xrd.yaml
 kubectl get managed
 ```
 
+## Core example
+
+This example demonstrates support for core Kubernetes resources. A Secret is always
+created both in Crossplane <2.2.0 without required_schemas capability and in Crossplane >2.2.0
+where that capability is supported.
+
+Create the `CoolSecret` XRD and composition:
 ```shell
-kubectl delete -f omit/composition.yaml
-kubectl delete -f omit/xrd.yaml
+kubectl apply -f core/xrd.yaml
+kubectl apply -f core/composition.yaml
+```
+
+Create a `CoolSecret` instance:
+```shell
+kubectl apply -f core/xr.yaml
+```
+
+Watch the composed resources being created and observe how readiness propagates as each
+resource satisfies its `readyWhen` conditions:
+```shell
+crossplane beta trace -w coolsecret.core.example.crossplane.io/cool-secret
+```
+
+### Clean-up
+
+```shell
+kubectl delete -f core/xr.yaml
+kubectl delete -f core/composition.yaml
+kubectl delete -f core/xrd.yaml
 ```
 
 ## Collection Limits Example

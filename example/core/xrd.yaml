@@ -1,0 +1,25 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: coolsecrets.core.example.crossplane.io
+spec:
+  group: core.example.crossplane.io
+  names:
+    kind: CoolSecret
+    plural: coolsecrets
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              secretField:
+                type: string
+          status:
+            type: object
