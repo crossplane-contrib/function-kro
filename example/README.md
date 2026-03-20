@@ -256,3 +256,38 @@ kubectl get managed
 kubectl delete -f collections/composition.yaml
 kubectl delete -f collections/xrd.yaml
 ```
+
+## Core example
+
+This example demonstrates support for core Kubernetes resources. A Secret is always
+created both in Crossplane <2.2.0 without required_schemas capability and in Crossplane >2.2.0
+where that capability is supported.
+
+Create the `CoolSecret` XRD and composition:
+```shell
+kubectl apply -f core/xrd.yaml
+kubectl apply -f core/composition.yaml
+```
+
+Create a `CoolSecret` instance:
+```shell
+kubectl apply -f core/xr.yaml
+```
+
+Watch the composed resources being created and observe how readiness propagates as each
+resource satisfies its `readyWhen` conditions:
+```shell
+crossplane beta trace -w coolsecret.core.example.crossplane.io/cool-secret
+```
+
+### Clean-up
+
+```shell
+kubectl delete -f kubectl apply -f core/xr.yaml
+kubectl get managed
+```
+
+```shell
+kubectl delete -f core/composition.yaml
+kubectl delete -f core/xrd.yaml
+```

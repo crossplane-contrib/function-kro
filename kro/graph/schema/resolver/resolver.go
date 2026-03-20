@@ -15,6 +15,7 @@
 package resolver
 
 import (
+	"maps"
 	"net/http"
 	"time"
 
@@ -24,7 +25,10 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/validation/spec"
+
+	"github.com/crossplane-contrib/function-kro/kro/graph/schema/resolver/generated"
 )
 
 // NewCombinedResolver creates a new schema resolver that can resolve both core and client types.
@@ -52,7 +56,7 @@ func NewCombinedResolver(clientConfig *rest.Config, httpClient *http.Client) (re
 	// CoreResolver is a resolver that uses the OpenAPI definitions to resolve
 	// core types. It is used to resolve types that are known at compile time.
 	coreResolver := resolver.NewDefinitionsSchemaResolver(
-		openapi.GetOpenAPIDefinitions,
+		mergedOpenAPIDefinitions,
 		scheme.Scheme,
 	)
 
@@ -89,11 +93,30 @@ func NewCombinedResolverFromCRDs(crdResolver *CRDSchemaResolver) resolver.Schema
 // newCoreResolver creates a resolver for built-in Kubernetes types using
 // compiled-in OpenAPI definitions. This handles types like Deployment, Service,
 // ConfigMap, etc. that are part of the core Kubernetes API.
+//
+// It merges two definition sources into a single resolver so that $ref
+// resolution works across both:
+//   - generated definitions: common API groups (core/v1, apps/v1, batch/v1,
+//     rbac/v1, networking/v1, policy/v1, storage/v1, autoscaling/v2, coordination/v1)
+//   - apiextensions-apiserver definitions: CRD types, meta/v1 (ObjectMeta,
+//     LabelSelector, etc.), and other apimachinery types
 func newCoreResolver() resolver.SchemaResolver {
 	return resolver.NewDefinitionsSchemaResolver(
-		openapi.GetOpenAPIDefinitions,
+		mergedOpenAPIDefinitions,
 		scheme.Scheme,
 	)
+}
+
+// mergedOpenAPIDefinitions returns OpenAPI definitions from both our generated
+// definitions and the apiextensions-apiserver definitions. Our generated
+// definitions take priority for overlapping types.
+func mergedOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenAPIDefinition {
+	// Start with apiextensions-apiserver definitions (meta/v1, CRD types, etc.)
+	merged := openapi.GetOpenAPIDefinitions(ref)
+	// Layer our generated definitions on top (core/v1, apps/v1, etc.)
+	maps.Copy(merged, generated.GetOpenAPIDefinitions(ref))
+
+	return merged
 }
 
 // combinedResolver tries resolvers in order until one returns a schema.
