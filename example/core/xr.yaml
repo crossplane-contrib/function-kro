@@ -1,0 +1,6 @@
+apiVersion: core.example.crossplane.io/v1
+kind: CoolSecret
+metadata:
+  name: cool-secret
+spec:
+  secretField: cool-value
