@@ -15,6 +15,8 @@ import (
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
+
+	"github.com/crossplane-contrib/function-kro/kro/graph"
 )
 
 // buildSchema creates an OpenAPI v3 schema with standard apiVersion, kind, and
@@ -1451,7 +1453,13 @@ func TestRunFunction(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			f := &Function{log: logging.NewNopLogger()}
+			f := &Function{
+				log: logging.NewNopLogger(),
+				rgdConfig: graph.RGDConfig{
+					MaxCollectionSize:          1000,
+					MaxCollectionDimensionSize: 10,
+				},
+			}
 			rsp, err := f.RunFunction(tc.args.ctx, tc.args.req)
 
 			if diff := cmp.Diff(tc.want.rsp, rsp, protocmp.Transform()); diff != "" {

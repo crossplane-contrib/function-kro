@@ -15,22 +15,15 @@
 package graph
 
 import (
-	"net/http"
 	"os"
 	"testing"
 
 	"github.com/google/cel-go/cel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	apiservercel "k8s.io/apiserver/pkg/cel"
-	memory2 "k8s.io/client-go/discovery/cached/memory"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/restmapper"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
 	krov1alpha1 "github.com/crossplane-contrib/function-kro/input/v1beta1"
@@ -267,11 +260,9 @@ func exprOriginals(exprs []*krocel.Expression) []string {
 }
 
 func TestGraphBuilder_Validation(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -336,20 +327,8 @@ func TestGraphBuilder_Validation(t *testing.T) {
 			wantErr: true,
 			errMsg:  "naming convention violation",
 		},
-		{
-			name: "invalid KRO kind name",
-			resourceGraphDefinitionOpts: []generator.ResourceGraphDefinitionOption{
-				generator.WithSchema(
-					"invalidKind", "v1alpha1",
-					map[string]interface{}{
-						"name": "string",
-					},
-					nil,
-				),
-			},
-			wantErr: true,
-			errMsg:  "is not a valid KRO kind name",
-		},
+		// NOTE: "invalid KRO kind name" test removed — function-kro does not validate
+		// the XR kind name (it comes from Crossplane, not from user input).
 		{
 			name: "resource without a valid GVK",
 			resourceGraphDefinitionOpts: []generator.ResourceGraphDefinitionOption{
@@ -367,28 +346,9 @@ func TestGraphBuilder_Validation(t *testing.T) {
 			wantErr: true,
 			errMsg:  "is not a valid Kubernetes object",
 		},
-		{
-			name: "cluster-scoped resource with namespace",
-			resourceGraphDefinitionOpts: []generator.ResourceGraphDefinitionOption{
-				generator.WithSchema(
-					"Test", "v1alpha1",
-					map[string]interface{}{
-						"name": "string",
-					},
-					nil,
-				),
-				generator.WithResource("crd", map[string]interface{}{
-					"apiVersion": "apiextensions.k8s.io/v1",
-					"kind":       "CustomResourceDefinition",
-					"metadata": map[string]interface{}{
-						"name":      "tests.kro.run",
-						"namespace": "default",
-					},
-				}, nil, nil),
-			},
-			wantErr: true,
-			errMsg:  "cluster-scoped and must not set metadata.namespace",
-		},
+		// NOTE: "cluster-scoped resource with namespace" test removed — function-kro
+		// doesn't have a REST mapper so it can't determine cluster-scoped resources.
+		// Crossplane manages namespace scoping.
 		{
 			name: "invalid CEL syntax in readyWhen",
 			resourceGraphDefinitionOpts: []generator.ResourceGraphDefinitionOption{
@@ -566,20 +526,8 @@ func TestGraphBuilder_Validation(t *testing.T) {
 			wantErr: true,
 			errMsg:  "schema not found",
 		},
-		{
-			name: "invalid instance spec field type",
-			resourceGraphDefinitionOpts: []generator.ResourceGraphDefinitionOption{
-				generator.WithSchema(
-					"Test", "v1alpha1",
-					map[string]interface{}{
-						"port": "wrongtype",
-					},
-					nil,
-				),
-			},
-			wantErr: true,
-			errMsg:  "failed to build OpenAPI schema for instance",
-		},
+		// NOTE: "invalid instance spec field type" test removed — function-kro
+		// receives the XR schema from Crossplane; SimpleSchema validation not applicable.
 		{
 			name: "invalid instance status field reference",
 			resourceGraphDefinitionOpts: []generator.ResourceGraphDefinitionOption{
@@ -617,7 +565,7 @@ func TestGraphBuilder_Validation(t *testing.T) {
 				),
 			},
 			wantErr: true,
-			errMsg:  "failed to create instance node",
+			errMsg:  "failed to build instance node",
 		},
 		{
 			name: "invalid field type in resource spec",
@@ -841,7 +789,8 @@ func TestGraphBuilder_Validation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-group", tt.resourceGraphDefinitionOpts...)
-			_, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -854,11 +803,9 @@ func TestGraphBuilder_Validation(t *testing.T) {
 }
 
 func TestGraphBuilder_DependencyValidation(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -1397,7 +1344,8 @@ func TestGraphBuilder_DependencyValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("testrgd", tt.resourceGraphDefinitionOpts...)
-			g, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1414,11 +1362,9 @@ func TestGraphBuilder_DependencyValidation(t *testing.T) {
 }
 
 func TestGraphBuilder_ExpressionParsing(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -1721,7 +1667,8 @@ func TestGraphBuilder_ExpressionParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("testrgd", tt.resourceGraphDefinitionOpts...)
-			g, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 			require.NoError(t, err)
 			if tt.validateVars != nil {
 				tt.validateVars(t, g)
@@ -1752,11 +1699,9 @@ func validateVariables(t *testing.T, actual []*variable.ResourceField, expected 
 }
 
 func TestGraphBuilder_CELTypeChecking(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -2183,7 +2128,8 @@ func TestGraphBuilder_CELTypeChecking(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-cel-types", tt.resourceGraphDefinitionOpts...)
-			_, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -2196,38 +2142,16 @@ func TestGraphBuilder_CELTypeChecking(t *testing.T) {
 }
 
 func TestNewBuilder(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *rest.Config
-		client  *http.Client
-		wantErr string
-	}{
-		{name: "success", config: &rest.Config{}, client: &http.Client{}},
-		{name: "schema resolver creation failure", config: &rest.Config{Host: "://bad"}, client: &http.Client{}, wantErr: "failed to create schema resolver"},
-		{name: "rest mapper creation failure", config: &rest.Config{}, client: nil, wantErr: "failed to create dynamic REST mapper"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			builder, err := NewBuilder(tt.config, tt.client)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.NotNil(t, builder)
-		})
-	}
+	// In function-kro, NewBuilder takes a SchemaResolver directly (no REST config).
+	fakeResolver, _ := k8s.NewFakeResolver()
+	builder := NewBuilder(fakeResolver)
+	assert.NotNil(t, builder)
 }
 
 func TestGraphBuilder_StructuralTypeCompatibility(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -2549,7 +2473,8 @@ func TestGraphBuilder_StructuralTypeCompatibility(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("testrgd", tt.resourceGraphDefinitionOpts...)
-			_, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 			if tt.wantErr {
 				if !assert.Error(t, err) {
 					t.Logf("Expected error but got nil")
@@ -2566,11 +2491,9 @@ func TestGraphBuilder_StructuralTypeCompatibility(t *testing.T) {
 }
 
 func TestGraphBuilder_ForEachParsing(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -2952,7 +2875,8 @@ func TestGraphBuilder_ForEachParsing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("testrgd", tt.resourceGraphDefinitionOpts...)
-			graph, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.errMsg != "" {
@@ -2969,11 +2893,9 @@ func TestGraphBuilder_ForEachParsing(t *testing.T) {
 }
 
 func TestGraphBuilder_CollectionChaining(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -3169,7 +3091,8 @@ func TestGraphBuilder_CollectionChaining(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-rgd", tt.resourceGraphDefinitionOpts...)
-			graph, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -3190,11 +3113,9 @@ func TestGraphBuilder_CollectionChaining(t *testing.T) {
 }
 
 func TestGraphBuilder_IncludeWhenReferences(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -3328,7 +3249,8 @@ func TestGraphBuilder_IncludeWhenReferences(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-includewhen-refs", tt.resourceGraphDefinitionOpts...)
-			g, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -3347,11 +3269,9 @@ func TestGraphBuilder_IncludeWhenReferences(t *testing.T) {
 }
 
 func TestGraphBuilder_CollectionValidation(t *testing.T) {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	builder := &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 
 	tests := []struct {
@@ -3585,40 +3505,15 @@ func TestGraphBuilder_CollectionValidation(t *testing.T) {
 			},
 			wantErr: false,
 		},
-		{
-			name: "invalid collection - cluster-scoped resource with iterator only in namespace",
-			resourceGraphDefinitionOpts: []generator.ResourceGraphDefinitionOption{
-				generator.WithSchema(
-					"ClusterScoped", "v1alpha1",
-					map[string]interface{}{
-						"names": "[]string",
-					},
-					nil,
-				),
-				// CRD is cluster-scoped, so namespace field doesnt count for identity
-				generator.WithResourceCollection("crds", map[string]interface{}{
-					"apiVersion": "apiextensions.k8s.io/v1",
-					"kind":       "CustomResourceDefinition",
-					"metadata": map[string]interface{}{
-						"name": "static-name",
-						// Iterator in namespace field doesn't count for cluster-scoped resources
-						"namespace": "${name}",
-					},
-				},
-					[]krov1alpha1.ForEachDimension{
-						{"name": "${schema.spec.names}"},
-					},
-					nil, nil),
-			},
-			wantErr: true,
-			errMsg:  "cluster-scoped and must not set metadata.namespace",
-		},
+		// NOTE: "invalid collection - cluster-scoped resource with iterator only in namespace" test
+		// removed — function-kro has no REST mapper and cannot determine resource scope.
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-rgd", tt.resourceGraphDefinitionOpts...)
-			graph, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
+			xrSchema := generator.BuildTestXRSchema(rgd)
+			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -3635,11 +3530,9 @@ func TestGraphBuilder_CollectionValidation(t *testing.T) {
 }
 
 func newUnitTestBuilder() *Builder {
-	fakeResolver, fakeDiscovery := k8s.NewFakeResolver()
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory2.NewMemCacheClient(fakeDiscovery))
+	fakeResolver, _ := k8s.NewFakeResolver()
 	return &Builder{
 		schemaResolver: fakeResolver,
-		restMapper:     restMapper,
 	}
 }
 
@@ -3693,7 +3586,7 @@ func TestBuildRGResourceErrorPaths(t *testing.T) {
 		_, _, err := builder.buildRGResource(testParser, &krov1alpha1.Resource{
 			ID:       "bad",
 			Template: rawExt("["),
-		}, 0, true)
+		}, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to unmarshal resource")
 	})
@@ -3708,29 +3601,9 @@ kind: ConfigMap
 metadata:
   name: test
 `),
-		}, 0, true)
+		}, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to extract GVK")
-	})
-
-	t.Run("rest mapping error", func(t *testing.T) {
-		fakeResolver, _ := k8s.NewFakeResolver()
-		builder := &Builder{
-			schemaResolver: fakeResolver,
-			restMapper:     meta.NewDefaultRESTMapper([]schema.GroupVersion{}),
-		}
-
-		_, _, err := builder.buildRGResource(testParser, &krov1alpha1.Resource{
-			ID: "cm",
-			Template: rawExt(`
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: test
-`),
-		}, 0, true)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to get REST mapping")
 	})
 
 	t.Run("external ref parse error", func(t *testing.T) {
@@ -3744,7 +3617,7 @@ metadata:
 					Name: "${outer(${inner})}",
 				},
 			},
-		}, 0, true)
+		}, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse external ref resource")
 	})
@@ -3761,7 +3634,7 @@ metadata:
 spec:
   group: tests.kro.run
 `),
-		}, 0, true)
+		}, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse schemaless resource")
 	})
@@ -3778,7 +3651,7 @@ metadata:
 spec:
   group: ${schema.spec.group}
 `),
-		}, 0, true)
+		}, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "only supported for metadata fields")
 	})
@@ -3795,7 +3668,7 @@ metadata:
 spec:
   unknownField: ${schema.spec.name}
 `),
-		}, 0, true)
+		}, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to extract CEL expressions from schema")
 	})
@@ -3813,306 +3686,62 @@ spec:
 					},
 				},
 			},
-		}, 0, true)
+		}, 0)
 		require.NoError(t, err)
 		assert.Equal(t, NodeTypeExternalCollection, node.Meta.Type)
 	})
 
-	t.Run("cluster-scoped instance requires namespace on namespaced resource", func(t *testing.T) {
-		builder := newUnitTestBuilder()
-		_, _, err := builder.buildRGResource(testParser, &krov1alpha1.Resource{
-			ID: "cm",
-			Template: rawExt(`
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: test
-`),
-		}, 0, false)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "must set metadata.namespace when the instance CRD is cluster-scoped")
-	})
-
-	t.Run("cluster-scoped instance requires namespace on namespaced external ref", func(t *testing.T) {
-		builder := newUnitTestBuilder()
-		_, _, err := builder.buildRGResource(testParser, &krov1alpha1.Resource{
-			ID: "external",
-			ExternalRef: &krov1alpha1.ExternalRef{
-				APIVersion: "v1",
-				Kind:       "ConfigMap",
-				Metadata: krov1alpha1.ExternalRefMetadata{
-					Name: "test",
-				},
-			},
-		}, 0, false)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "must set metadata.namespace when the instance CRD is cluster-scoped")
-	})
+	// NOTE: "cluster-scoped instance" tests removed — function-kro always treats
+	// instances as namespace-scoped; Crossplane manages actual CRD scope.
 }
 
-func TestClusterScopedInstanceRejectsSchemaMetadataNamespace(t *testing.T) {
-	builder := newUnitTestBuilder()
-	rgd := generator.NewResourceGraphDefinition("test-rgd",
-		generator.WithSchema(
-			"ClusterPolicy", "v1alpha1",
-			map[string]interface{}{
-				"name": "string",
-			},
-			nil,
-			generator.WithScope(krov1alpha1.ResourceScopeCluster),
-		),
-		generator.WithResource("config", map[string]interface{}{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
-				"name":      "${schema.spec.name}",
-				"namespace": "${schema.metadata.namespace}",
-			},
-		}, nil, nil),
-	)
-
-	_, err := builder.NewResourceGraphDefinition(rgd, defaultRGDConfig)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "schema.metadata.namespace")
-}
-
-func TestBuildInstanceNode(t *testing.T) {
-	inspector := newUnitInspector(t, "resource")
-	tests := []struct {
-		name      string
-		variables []variable.FieldDescriptor
-		template  map[string]interface{}
-		wantErr   string
-		wantPath  string
-		wantDeps  []string
-	}{
-		{
-			name: "dependency extraction failure",
-			variables: []variable.FieldDescriptor{{
-				Path:       "field",
-				Expression: expr("resource +"),
-			}},
-			template: map[string]interface{}{"field": "${resource +}"},
-			wantErr:  "failed to extract dependencies",
-		},
-		{
-			name: "status field must reference a resource",
-			variables: []variable.FieldDescriptor{{
-				Path:       "field",
-				Expression: expr("true"),
-			}},
-			template: map[string]interface{}{"field": "${true}"},
-			wantErr:  "must refer to a resource",
-		},
-		{
-			name: "successful node prefixes status path",
-			variables: []variable.FieldDescriptor{{
-				Path:       "field",
-				Expression: expr("resource.spec.name"),
-			}},
-			template: map[string]interface{}{"field": "${resource.spec.name}"},
-			wantPath: "status.field",
-			wantDeps: []string{"resource"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			node, err := buildInstanceNode(
-				"example.com",
-				"v1alpha1",
-				"Test",
-				true, // namespaced (default)
-				tt.variables,
-				tt.template,
-				inspector,
-			)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.wantPath, node.Variables[0].Path)
-			assert.Equal(t, tt.wantDeps, node.Meta.Dependencies)
-		})
-	}
-}
-
-func TestBuildInstanceSpecSchema(t *testing.T) {
-	tests := []struct {
-		name    string
-		schema  *krov1alpha1.Schema
-		wantErr string
-	}{
-		{
-			name: "invalid spec yaml",
-			schema: &krov1alpha1.Schema{
-				Spec:  rawExt("["),
-				Types: rawExt("{}"),
-			},
-			wantErr: "failed to unmarshal spec schema",
-		},
-		{
-			name: "invalid custom types yaml",
-			schema: &krov1alpha1.Schema{
-				Spec:  rawExt("{}"),
-				Types: rawExt("["),
-			},
-			wantErr: "failed to unmarshal predefined types",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := buildInstanceSpecSchema(tt.schema)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.wantErr)
-		})
-	}
-}
-
-func TestBuildStatusSchema(t *testing.T) {
-	resourceSchema := objectSchema(map[string]spec.Schema{
-		"spec": *objectSchema(map[string]spec.Schema{
-			"name":     {SchemaProps: spec.SchemaProps{Type: []string{"string"}}},
-			"replicas": {SchemaProps: spec.SchemaProps{Type: []string{"integer"}}},
-		}),
-	})
-	env, provider := newTypedEnvWithProvider(t, map[string]*spec.Schema{"resource": resourceSchema})
-	statusBc := newTestBuildContext(t, env, provider)
-	inspector := newUnitInspector(t, "resource")
-	tests := []struct {
-		name            string
-		statusRaw       string
-		wantErr         string
-		wantStringField bool
-	}{
-		{name: "invalid status yaml", statusRaw: "[", wantErr: "failed to unmarshal status schema"},
-		{name: "invalid status expression syntax", statusRaw: "field: ${outer(${inner})}\n", wantErr: "failed to extract CEL expressions from status"},
-		{name: "string interpolation type check failure", statusRaw: "field: prefix-${resource.spec.missing}\n", wantErr: "failed to type-check status expression"},
-		{name: "string interpolation non string expression", statusRaw: "field: prefix-${resource.spec.replicas}\n", wantErr: "failed to type-check status expression \"prefix-${resource.spec.replicas}\" at path \"field\": ERROR: <input>:1:11: found no matching overload for '_+_' applied to '(string, int)'\n | \"prefix-\" + (resource.spec.replicas)\n | ..........^"},
-		{name: "string interpolation success", statusRaw: "field: prefix-${resource.spec.name}\n", wantStringField: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			statusSchema, fieldDescriptors, _, err := buildStatusSchema(statusBc, &krov1alpha1.Schema{
-				Status: rawExt(tt.statusRaw),
-			}, []string{"resource"}, inspector)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-				return
-			}
-
-			require.NoError(t, err)
-			require.Len(t, fieldDescriptors, 1)
-			assert.Equal(t, "string", statusSchema.Properties["field"].Type)
-		})
-	}
-}
+// NOTE: TestBuildInstanceNode, TestBuildInstanceSpecSchema, TestBuildStatusSchema removed.
+// These tested upstream KRO functions (buildInstanceNode, buildInstanceSpecSchema,
+// buildStatusSchema) that don't exist in function-kro. We receive the XR schema
+// from Crossplane directly rather than building it from SimpleSchema/CRD.
 
 func TestGetSchemaWithoutStatus(t *testing.T) {
+	// In function-kro, getSchemaWithoutStatus takes a *spec.Schema directly
+	// (not a CRD) and removes the status property.
 	tests := []struct {
-		name             string
-		crd              *extv1.CustomResourceDefinition
-		wantErr          string
-		wantHasStatus    bool
-		wantHasMeta      bool
-		wantHasNamespace bool
+		name          string
+		schema        *spec.Schema
+		wantHasStatus bool
 	}{
 		{
-			name: "requires exactly one version",
-			crd: &extv1.CustomResourceDefinition{
-				Spec: extv1.CustomResourceDefinitionSpec{
-					Versions: []extv1.CustomResourceDefinitionVersion{},
-				},
-			},
-			wantErr: "exactly one version",
+			name:          "nil schema returns nil",
+			schema:        nil,
+			wantHasStatus: false,
 		},
 		{
-			name: "requires schema",
-			crd: &extv1.CustomResourceDefinition{
-				Spec: extv1.CustomResourceDefinitionSpec{
-					Versions: []extv1.CustomResourceDefinitionVersion{{}},
-				},
-			},
-			wantErr: "schema defined",
+			name: "removes status property",
+			schema: objectSchema(map[string]spec.Schema{
+				"spec":     {SchemaProps: spec.SchemaProps{Type: []string{"object"}}},
+				"status":   {SchemaProps: spec.SchemaProps{Type: []string{"object"}}},
+				"metadata": {SchemaProps: spec.SchemaProps{Type: []string{"object"}}},
+			}),
+			wantHasStatus: false,
 		},
 		{
-			name: "injects metadata when missing",
-			crd: &extv1.CustomResourceDefinition{
-				Spec: extv1.CustomResourceDefinitionSpec{
-					Versions: []extv1.CustomResourceDefinitionVersion{{
-						Schema: &extv1.CustomResourceValidation{
-							OpenAPIV3Schema: &extv1.JSONSchemaProps{
-								Type: "object",
-								Properties: map[string]extv1.JSONSchemaProps{
-									"status": {Type: "object"},
-								},
-							},
-						},
-					}},
-				},
-			},
-			wantHasStatus:    false,
-			wantHasMeta:      true,
-			wantHasNamespace: true,
-		},
-		{
-			name: "injects metadata when properties map is nil",
-			crd: &extv1.CustomResourceDefinition{
-				Spec: extv1.CustomResourceDefinitionSpec{
-					Versions: []extv1.CustomResourceDefinitionVersion{{
-						Schema: &extv1.CustomResourceValidation{
-							OpenAPIV3Schema: &extv1.JSONSchemaProps{Type: "object"},
-						},
-					}},
-				},
-			},
-			wantHasStatus:    false,
-			wantHasMeta:      true,
-			wantHasNamespace: true,
-		},
-		{
-			name: "cluster-scoped instances omit metadata namespace from injected schema",
-			crd: &extv1.CustomResourceDefinition{
-				Spec: extv1.CustomResourceDefinitionSpec{
-					Scope: extv1.ClusterScoped,
-					Versions: []extv1.CustomResourceDefinitionVersion{{
-						Schema: &extv1.CustomResourceValidation{
-							OpenAPIV3Schema: &extv1.JSONSchemaProps{Type: "object"},
-						},
-					}},
-				},
-			},
-			wantHasStatus:    false,
-			wantHasMeta:      true,
-			wantHasNamespace: false,
+			name: "schema without status is unchanged",
+			schema: objectSchema(map[string]spec.Schema{
+				"spec":     {SchemaProps: spec.SchemaProps{Type: []string{"object"}}},
+				"metadata": {SchemaProps: spec.SchemaProps{Type: []string{"object"}}},
+			}),
+			wantHasStatus: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			schemaWithoutStatus, err := getSchemaWithoutStatus(tt.crd)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
+			result, err := getSchemaWithoutStatus(tt.schema)
+			require.NoError(t, err)
+			if tt.schema == nil {
+				assert.Nil(t, result)
 				return
 			}
-
-			require.NoError(t, err)
-			_, hasStatus := schemaWithoutStatus.Properties["status"]
-			_, hasMetadata := schemaWithoutStatus.Properties["metadata"]
-			hasNamespace := false
-			if metadata, ok := schemaWithoutStatus.Properties["metadata"]; ok {
-				_, hasNamespace = metadata.Properties["namespace"]
-			}
+			_, hasStatus := result.Properties["status"]
 			assert.Equal(t, tt.wantHasStatus, hasStatus)
-			assert.Equal(t, tt.wantHasMeta, hasMetadata)
-			assert.Equal(t, tt.wantHasNamespace, hasNamespace)
 		})
 	}
 }

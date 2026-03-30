@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
@@ -56,8 +55,6 @@ func TestNodeDeepCopy(t *testing.T) {
 			ID:           "vpc",
 			Index:        3,
 			Type:         NodeTypeCollection,
-			GVR:          schema.GroupVersionResource{Group: "ec2.services.k8s.aws", Version: "v1alpha1", Resource: "vpcs"},
-			Namespaced:   true,
 			Dependencies: []string{"network"},
 		},
 		Template: &unstructured.Unstructured{

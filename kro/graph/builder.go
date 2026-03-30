@@ -379,7 +379,11 @@ func (b *Builder) buildRGResource(
 	// Determine node type.
 	nodeType := NodeTypeResource
 	if rgResource.ExternalRef != nil {
-		nodeType = NodeTypeExternal
+		if rgResource.ExternalRef.Metadata.Selector != nil {
+			nodeType = NodeTypeExternalCollection
+		} else {
+			nodeType = NodeTypeExternal
+		}
 	} else if len(forEachDimensions) > 0 {
 		nodeType = NodeTypeCollection
 	}

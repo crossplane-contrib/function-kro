@@ -33,51 +33,43 @@ import (
 func TestValidateRGResourceNames(t *testing.T) {
 	tests := []struct {
 		name        string
-		rgd         *v1alpha1.ResourceGraphDefinition
+		rgd         *v1beta1.ResourceGraph
 		expectError bool
 	}{
 		{
 			name: "Valid resource graph definition resource ids",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "validID1"},
-						{ID: "validID2"},
-					},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{ID: "validID1"},
+					{ID: "validID2"},
 				},
 			},
 			expectError: false,
 		},
 		{
 			name: "Duplicate resource ids",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "duplicateID"},
-						{ID: "duplicateID"},
-					},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{ID: "duplicateID"},
+					{ID: "duplicateID"},
 				},
 			},
 			expectError: true,
 		},
 		{
 			name: "Invalid resource ID",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "Invalid_ID"},
-					},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{ID: "Invalid_ID"},
 				},
 			},
 			expectError: true,
 		},
 		{
 			name: "Reserved word as resource id",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "spec"},
-					},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{ID: "spec"},
 				},
 			},
 			expectError: true,
@@ -86,9 +78,9 @@ func TestValidateRGResourceNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateResourceIDs(tt.rgd)
+			err := validateResourceIDs(tt.rgd, RGDConfig{MaxCollectionDimensionSize: 10})
 			if (err != nil) != tt.expectError {
-				t.Errorf("validateRGResourceIDs() error = %v, expectError %v", err, tt.expectError)
+				t.Errorf("validateResourceIDs() error = %v, expectError %v", err, tt.expectError)
 			}
 		})
 	}
@@ -263,87 +255,57 @@ func TestValidateKubernetesVersion(t *testing.T) {
 	}
 }
 
-func TestValidateResourceGraphDefinition(t *testing.T) {
+// NOTE: TestValidateResourceGraphDefinition removed — upstream tested Schema.Kind
+// validation which is not applicable to function-kro (we don't have a Schema type
+// with Kind field; the XR schema comes from Crossplane).
+
+func TestValidateResourceIDs(t *testing.T) {
 	defaultRGDConfig := RGDConfig{
 		MaxCollectionDimensionSize: 10,
 	}
 	tests := []struct {
-		name      string
-		rgd       *v1alpha1.ResourceGraphDefinition
-		rgdConfig RGDConfig
-		wantErr   bool
+		name    string
+		rgd     *v1beta1.ResourceGraph
+		wantErr bool
 	}{
 		{
-			name: "Valid naming conventions",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "validResourceID"},
-					},
-					Schema: &v1alpha1.Schema{
-						Kind: "ValidKindName",
-					},
+			name: "Valid resource IDs",
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{ID: "validResourceID"},
 				},
 			},
-			rgdConfig: defaultRGDConfig,
-			wantErr:   false,
-		},
-		{
-			name: "Invalid kind name",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "validResourceID"},
-					},
-					Schema: &v1alpha1.Schema{
-						Kind: "invalidKindName",
-					},
-				},
-			},
-			rgdConfig: defaultRGDConfig,
-			wantErr:   true,
+			wantErr: false,
 		},
 		{
 			name: "Invalid resource ID",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "invalid_ResourceID"},
-					},
-					Schema: &v1alpha1.Schema{
-						Kind: "ValidKindName",
-					},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{ID: "invalid_ResourceID"},
 				},
 			},
-			rgdConfig: defaultRGDConfig,
-			wantErr:   true,
+			wantErr: true,
 		},
 		{
 			name: "Invalid foreach iterator name",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "validResourceID",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"invalid_IteratorName": "b"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "validResourceID",
+						ForEach: []v1beta1.ForEachDimension{
+							{"invalid_IteratorName": "b"},
 						},
-					},
-					Schema: &v1alpha1.Schema{
-						Kind: "ValidKindName",
 					},
 				},
 			},
-			rgdConfig: defaultRGDConfig,
-			wantErr:   true,
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := validateResourceGraphDefinition(tt.rgd, tt.rgdConfig); (err != nil) != tt.wantErr {
-				t.Errorf("validateResourceGraphDefinition() error = %v, wantErr %v", err, tt.wantErr)
+			if err := validateResourceIDs(tt.rgd, defaultRGDConfig); (err != nil) != tt.wantErr {
+				t.Errorf("validateResourceIDs() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -417,21 +379,19 @@ func TestValidateForEachDimensions(t *testing.T) {
 	}
 	tests := []struct {
 		name        string
-		rgd         *v1alpha1.ResourceGraphDefinition
+		rgd         *v1beta1.ResourceGraph
 		rgdConfig   RGDConfig
 		expectError bool
 		errorMsg    string
 	}{
 		{
 			name: "Valid forEach iterator",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "workers",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"name": "${schema.spec.workers}"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "workers",
+						ForEach: []v1beta1.ForEachDimension{
+							{"name": "${schema.spec.workers}"},
 						},
 					},
 				},
@@ -441,15 +401,13 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Valid multiple forEach iterators",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "deployments",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"region": "${schema.spec.regions}"},
-								{"tier": "${schema.spec.tiers}"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "deployments",
+						ForEach: []v1beta1.ForEachDimension{
+							{"region": "${schema.spec.regions}"},
+							{"tier": "${schema.spec.tiers}"},
 						},
 					},
 				},
@@ -459,14 +417,12 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Invalid iterator name - not lowerCamelCase",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "workers",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"Invalid_Name": "${schema.spec.workers}"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "workers",
+						ForEach: []v1beta1.ForEachDimension{
+							{"Invalid_Name": "${schema.spec.workers}"},
 						},
 					},
 				},
@@ -477,14 +433,12 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Iterator name is reserved keyword (schema)",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "workers",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"schema": "${schema.spec.workers}"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "workers",
+						ForEach: []v1beta1.ForEachDimension{
+							{"schema": "${schema.spec.workers}"},
 						},
 					},
 				},
@@ -495,14 +449,12 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Iterator name 'each' is reserved for per-item readiness",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "pods",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"each": "${schema.spec.podNames}"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "pods",
+						ForEach: []v1beta1.ForEachDimension{
+							{"each": "${schema.spec.podNames}"},
 						},
 					},
 				},
@@ -513,15 +465,13 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Iterator name conflicts with resource ID",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "database"},
-						{
-							ID: "backups",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"database": "${schema.spec.databases}"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{ID: "database"},
+					{
+						ID: "backups",
+						ForEach: []v1beta1.ForEachDimension{
+							{"database": "${schema.spec.databases}"},
 						},
 					},
 				},
@@ -532,15 +482,13 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Duplicate iterator names in same resource",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "workers",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"name": "${schema.spec.workers}"},
-								{"name": "${schema.spec.otherWorkers}"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "workers",
+						ForEach: []v1beta1.ForEachDimension{
+							{"name": "${schema.spec.workers}"},
+							{"name": "${schema.spec.otherWorkers}"},
 						},
 					},
 				},
@@ -551,20 +499,18 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Same iterator name in different resources is valid",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "workers",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"name": "${schema.spec.workers}"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "workers",
+						ForEach: []v1beta1.ForEachDimension{
+							{"name": "${schema.spec.workers}"},
 						},
-						{
-							ID: "backups",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"name": "${schema.spec.databases}"},
-							},
+					},
+					{
+						ID: "backups",
+						ForEach: []v1beta1.ForEachDimension{
+							{"name": "${schema.spec.databases}"},
 						},
 					},
 				},
@@ -574,11 +520,9 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Resource without forEach is valid",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{ID: "deployment"},
-					},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{ID: "deployment"},
 				},
 			},
 			rgdConfig:   defaultRGDConfig,
@@ -586,14 +530,12 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Resource with more than max forEach dimensions",
-			rgd: &v1alpha1.ResourceGraphDefinition{
-				Spec: v1alpha1.ResourceGraphDefinitionSpec{
-					Resources: []*v1alpha1.Resource{
-						{
-							ID: "deployment",
-							ForEach: []v1alpha1.ForEachDimension{
-								{"a": "b"},
-							},
+			rgd: &v1beta1.ResourceGraph{
+				Resources: []*v1beta1.Resource{
+					{
+						ID: "deployment",
+						ForEach: []v1beta1.ForEachDimension{
+							{"a": "b"},
 						},
 					},
 				},
@@ -607,19 +549,19 @@ func TestValidateForEachDimensions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resourceIDs := sets.NewString()
-			for _, res := range tt.rgd.Spec.Resources {
+			for _, res := range tt.rgd.Resources {
 				resourceIDs.Insert(res.ID)
 			}
 			var err error
-			for _, res := range tt.rgd.Spec.Resources {
+			for _, res := range tt.rgd.Resources {
 				err = errors.Join(err, validateForEachDimensions(res, resourceIDs, tt.rgdConfig))
 			}
 			if (err != nil) != tt.expectError {
-				t.Errorf("validateResourceIDs() error = %v, expectError %v", err, tt.expectError)
+				t.Errorf("validateForEachDimensions() error = %v, expectError %v", err, tt.expectError)
 			}
 			if tt.expectError && err != nil && tt.errorMsg != "" {
 				if !strings.Contains(err.Error(), tt.errorMsg) {
-					t.Errorf("validateResourceIDs() error = %v, should contain %q", err, tt.errorMsg)
+					t.Errorf("validateForEachDimensions() error = %v, should contain %q", err, tt.errorMsg)
 				}
 			}
 		})
@@ -727,44 +669,44 @@ func TestValidateNoKROOwnedLabels(t *testing.T) {
 func TestValidateCombinableResourceFields(t *testing.T) {
 	tests := []struct {
 		name    string
-		res     *v1alpha1.Resource
+		res     *v1beta1.Resource
 		wantErr string
 	}{
 		{
 			name:    "missing both template and external ref",
-			res:     &v1alpha1.Resource{ID: "res"},
+			res:     &v1beta1.Resource{ID: "res"},
 			wantErr: "exactly one of template or externalRef must be provided",
 		},
 		{
 			name: "template and external ref together",
-			res: &v1alpha1.Resource{
+			res: &v1beta1.Resource{
 				ID:          "res",
 				Template:    runtime.RawExtension{Raw: []byte("kind: ConfigMap")},
-				ExternalRef: &v1alpha1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
+				ExternalRef: &v1beta1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
 			},
 			wantErr: "cannot use externalRef with template",
 		},
 		{
 			name: "external ref and foreach together",
-			res: &v1alpha1.Resource{
+			res: &v1beta1.Resource{
 				ID:          "res",
-				ExternalRef: &v1alpha1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
-				ForEach:     []v1alpha1.ForEachDimension{{"item": "${schema.spec.items}"}},
+				ExternalRef: &v1beta1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
+				ForEach:     []v1beta1.ForEachDimension{{"item": "${schema.spec.items}"}},
 			},
 			wantErr: "cannot use externalRef with forEach",
 		},
 		{
 			name: "template only is valid",
-			res: &v1alpha1.Resource{
+			res: &v1beta1.Resource{
 				ID:       "res",
 				Template: runtime.RawExtension{Raw: []byte("kind: ConfigMap")},
 			},
 		},
 		{
 			name: "external ref only is valid",
-			res: &v1alpha1.Resource{
+			res: &v1beta1.Resource{
 				ID:          "res",
-				ExternalRef: &v1alpha1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
+				ExternalRef: &v1beta1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
 			},
 		},
 	}
@@ -785,7 +727,7 @@ func TestValidateCombinableResourceFields(t *testing.T) {
 func TestValidateTemplateConstraints(t *testing.T) {
 	tests := []struct {
 		name               string
-		resource           *v1alpha1.Resource
+		resource           *v1beta1.Resource
 		object             map[string]interface{}
 		namespaced         bool
 		instanceNamespaced bool
@@ -793,7 +735,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 	}{
 		{
 			name: "invalid metadata namespace shape",
-			resource: &v1alpha1.Resource{
+			resource: &v1beta1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -804,7 +746,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "cluster scoped resource must not set namespace",
-			resource: &v1alpha1.Resource{
+			resource: &v1beta1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -817,7 +759,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "cluster-scoped instance requires explicit namespace on namespaced resource",
-			resource: &v1alpha1.Resource{
+			resource: &v1beta1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -829,7 +771,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "cluster-scoped instance rejects empty namespace on namespaced resource",
-			resource: &v1alpha1.Resource{
+			resource: &v1beta1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -843,7 +785,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "reserved kro label bubbles up",
-			resource: &v1alpha1.Resource{
+			resource: &v1beta1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -859,7 +801,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "valid namespaced object",
-			resource: &v1alpha1.Resource{
+			resource: &v1beta1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -875,7 +817,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "cluster-scoped instance allows explicit namespace on namespaced resource",
-			resource: &v1alpha1.Resource{
+			resource: &v1beta1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -904,9 +846,9 @@ func TestValidateTemplateConstraints(t *testing.T) {
 func TestValidateIdentityFields(t *testing.T) {
 	inspector := newUnitInspector(t, "schema")
 
-	makeNode := func(id, path, expression string, namespaced bool) *Node {
+	makeNode := func(id, path, expression string) *Node {
 		return &Node{
-			Meta: NodeMeta{ID: id, Namespaced: namespaced},
+			Meta: NodeMeta{ID: id},
 			Variables: []*variable.ResourceField{
 				{
 					FieldDescriptor: variable.FieldDescriptor{
@@ -927,7 +869,7 @@ func TestValidateIdentityFields(t *testing.T) {
 		{
 			name: "omit on metadata.name is rejected",
 			nodes: map[string]*Node{
-				"cm": makeNode("cm", MetadataNamePath, "omit()", true),
+				"cm": makeNode("cm", MetadataNamePath, "omit()"),
 			},
 			isInstanceNamespaced: true,
 			wantErr:              "omit() cannot be used at path \"metadata.name\"",
@@ -935,7 +877,7 @@ func TestValidateIdentityFields(t *testing.T) {
 		{
 			name: "conditional omit on metadata.name is rejected",
 			nodes: map[string]*Node{
-				"cm": makeNode("cm", MetadataNamePath, `schema.spec.name != "" ? schema.spec.name : omit()`, true),
+				"cm": makeNode("cm", MetadataNamePath, `schema.spec.name != "" ? schema.spec.name : omit()`),
 			},
 			isInstanceNamespaced: true,
 			wantErr:              "omit() cannot be used at path \"metadata.name\"",
@@ -943,7 +885,7 @@ func TestValidateIdentityFields(t *testing.T) {
 		{
 			name: "omit on metadata.namespace rejected for namespaced resource with cluster-scoped instance",
 			nodes: map[string]*Node{
-				"cm": makeNode("cm", MetadataNamespacePath, "omit()", true),
+				"cm": makeNode("cm", MetadataNamespacePath, "omit()"),
 			},
 			isInstanceNamespaced: false,
 			wantErr:              "omit() cannot be used at path \"metadata.namespace\"",
@@ -951,28 +893,21 @@ func TestValidateIdentityFields(t *testing.T) {
 		{
 			name: "omit on metadata.namespace allowed for namespaced instance",
 			nodes: map[string]*Node{
-				"cm": makeNode("cm", MetadataNamespacePath, "omit()", true),
+				"cm": makeNode("cm", MetadataNamespacePath, "omit()"),
 			},
 			isInstanceNamespaced: true,
 		},
 		{
-			name: "omit on metadata.namespace allowed for cluster-scoped resource",
-			nodes: map[string]*Node{
-				"crb": makeNode("crb", MetadataNamespacePath, "omit()", false),
-			},
-			isInstanceNamespaced: false,
-		},
-		{
 			name: "omit on non-required field is allowed",
 			nodes: map[string]*Node{
-				"cm": makeNode("cm", "spec.someField", "omit()", true),
+				"cm": makeNode("cm", "spec.someField", "omit()"),
 			},
 			isInstanceNamespaced: true,
 		},
 		{
 			name: "omit on metadata.name rejected for cluster-scoped instance",
 			nodes: map[string]*Node{
-				"cm": makeNode("cm", MetadataNamePath, "omit()", true),
+				"cm": makeNode("cm", MetadataNamePath, "omit()"),
 			},
 			isInstanceNamespaced: false,
 			wantErr:              "omit() cannot be used at path \"metadata.name\"",
@@ -980,7 +915,7 @@ func TestValidateIdentityFields(t *testing.T) {
 		{
 			name: "non-omit expression on metadata.name is allowed",
 			nodes: map[string]*Node{
-				"cm": makeNode("cm", MetadataNamePath, `"my-resource"`, true),
+				"cm": makeNode("cm", MetadataNamePath, `"my-resource"`),
 			},
 			isInstanceNamespaced: true,
 		},

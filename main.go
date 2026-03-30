@@ -20,9 +20,9 @@ type CLI struct {
 	Insecure           bool   `help:"Run without mTLS credentials. If you supply this flag --tls-server-certs-dir will be ignored."`
 	MaxRecvMessageSize int    `default:"4"                                                                                          help:"Maximum size of received messages in MB."`
 
-	FeatureGates            string `help:"Feature gates to enable/disable (e.g. CELOmitFunction=true)."  default:""`
-	RGDMaxCollectionSize    int    `help:"Maximum number of resources in a single collection."           default:"1000"`
-	RGDMaxCollectionDimSize int    `help:"Maximum number of dimensions in a forEach."                    default:"10"`
+	FeatureGates            string `default:""     help:"Feature gates to enable/disable (e.g. CELOmitFunction=true)."`
+	RGDMaxCollectionSize    int    `default:"1000" help:"Maximum number of resources in a single collection."`
+	RGDMaxCollectionDimSize int    `default:"10"   help:"Maximum number of dimensions in a forEach."`
 }
 
 // Run this Function.
