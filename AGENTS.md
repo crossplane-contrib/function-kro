@@ -238,6 +238,22 @@ cases := map[string]struct {
 }
 ```
 
+### Test Assertion Conventions
+
+All `RunFunction` tests (in `fn_test.go`) compare the **full expected response** using `cmp.Diff` with `protocmp.Transform()`, and check errors with `cmpopts.EquateErrors()`. Follow this pattern even for standalone test functions that live outside the main table:
+
+```go
+if diff := cmp.Diff(want, rsp, protocmp.Transform()); diff != "" {
+    t.Errorf("...\nf.RunFunction(...): -want rsp, +got rsp:\n%s", reason, diff)
+}
+
+if diff := cmp.Diff(nil, err, cmpopts.EquateErrors()); diff != "" {
+    t.Errorf("...\nf.RunFunction(...): -want err, +got err:\n%s", reason, diff)
+}
+```
+
+Do **not** use testify assertions (`require.NoError`, `assert.Contains`, etc.) or manual field-by-field checks in `fn_test.go`. Construct the full expected `*fnv1.RunFunctionResponse` — including `Results` for fatal cases — and diff it. This keeps all tests consistent and makes failures easy to read.
+
 ### Linting
 
 ```bash
