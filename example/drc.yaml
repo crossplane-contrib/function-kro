@@ -12,3 +12,5 @@ spec:
             - name: package-runtime
               args:
                 - --debug
+                - --feature-gates=CELOmitFunction=true
+                - --rgd-max-collection-size=5

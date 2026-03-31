@@ -1,0 +1,7 @@
+apiVersion: omit.example.crossplane.io/v1
+kind: NetworkingStack
+metadata:
+  name: cool-network
+spec:
+  region: us-west-2
+  enableDnsHostnames: false

@@ -1,0 +1,50 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: networkingstack-omit
+spec:
+  compositeTypeRef:
+    apiVersion: omit.example.crossplane.io/v1
+    kind: NetworkingStack
+  mode: Pipeline
+  pipeline:
+  - step: kro-run
+    functionRef:
+      name: function-kro
+    input:
+      apiVersion: kro.fn.crossplane.io/v1beta1
+      kind: ResourceGraph
+      status:
+        networkingInfo:
+          vpcID: ${vpc.status.atProvider.id}
+          subnetID: ${subnet.status.atProvider.id}
+      resources:
+      # VPC with optional DNS hostnames. When enableDnsHostnames is false,
+      # omit() removes the field entirely from the desired state rather than
+      # setting it to false. This matters for Server-Side Apply — Crossplane
+      # won't claim ownership of fields that aren't present.
+      - id: vpc
+        template:
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
+          kind: VPC
+          metadata: {}
+          spec:
+            forProvider:
+              region: ${schema.spec.region}
+              cidrBlock: 192.168.0.0/16
+              enableDnsHostnames: "${schema.spec.enableDnsHostnames ? true : omit()}"
+              enableDnsSupport: true
+      - id: subnet
+        template:
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
+          kind: Subnet
+          metadata: {}
+          spec:
+            forProvider:
+              region: ${schema.spec.region}
+              availabilityZone: ${schema.spec.region + "a"}
+              cidrBlock: 192.168.0.0/18
+              vpcId: ${vpc.status.atProvider.id}
+  - step: auto-ready
+    functionRef:
+      name: function-auto-ready
