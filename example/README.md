@@ -177,17 +177,25 @@ kubectl delete -f readiness/xrd.yaml
 
 ## External Reference Example
 
-This example demonstrates referencing existing resources using `externalRef`. Instead of
-creating all resources from scratch, the composition references an existing ConfigMap that
-provides platform configuration (region, CIDR block, environment). The VPC, subnet, and
-security group all source their configuration from this external ConfigMap rather than
-directly from the XR spec.
+This example demonstrates two ways to reference existing resources using `externalRef`:
 
-Create the `NetworkingStack` XRD, composition, and the external ConfigMap:
+1. **Single external ref** — fetch one ConfigMap by name to provide platform configuration
+   (region, CIDR block, environment)
+2. **External collection ref** — select multiple ConfigMaps by label selector to aggregate
+   notification subscriber data using CEL list functions (`size()`, `map()`, `exists()`).
+   The label value itself uses a CEL expression (`${schema.metadata.name}`) so the
+   selector dynamically matches ConfigMaps for the specific XR instance.
+
+The VPC, subnet, and security group source their configuration from the single external
+ConfigMap. The XR status additionally surfaces aggregated data from all subscriber
+ConfigMaps matched by label selector.
+
+Create the `NetworkingStack` XRD, composition, and the external ConfigMaps:
 ```shell
 kubectl apply -f externalref/xrd.yaml
 kubectl apply -f externalref/composition.yaml
 kubectl apply -f externalref/configmap.yaml
+kubectl apply -f externalref/subscribers.yaml
 ```
 
 Create a `NetworkingStack` instance:
@@ -201,10 +209,25 @@ ConfigMap:
 crossplane beta trace -w networkingstack.externalref.example.crossplane.io/cool-network
 ```
 
-We can see the networking info along with the platform configuration pulled from the
-external ConfigMap:
+We can see the platform configuration pulled from the single external ConfigMap:
 ```shell
-kubectl get networkingstack.externalref.example.crossplane.io/cool-network -o json | jq '.status.networkingInfo,.status.platformConfig'
+kubectl get networkingstack.externalref.example.crossplane.io/cool-network -o json | jq '.status.platformConfig'
+```
+
+The notification data is aggregated from all external subscriber ConfigMaps matching the
+`notification-channel: cool-network` label. The `subscriberCount`, `teams`, and
+`hasOncall` fields are computed using CEL list functions across the entire collection:
+```shell
+kubectl get networkingstack.externalref.example.crossplane.io/cool-network -o json | jq '.status.notifications'
+```
+
+This should show the aggregated subscriber data:
+```json
+{
+  "hasOncall": true,
+  "subscriberCount": "3",
+  "teams": "dev, platform, security"
+}
 ```
 
 ### Clean-up
@@ -215,6 +238,7 @@ kubectl get managed
 ```
 
 ```shell
+kubectl delete -f externalref/subscribers.yaml
 kubectl delete -f externalref/configmap.yaml
 kubectl delete -f externalref/composition.yaml
 kubectl delete -f externalref/xrd.yaml

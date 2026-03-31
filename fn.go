@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -130,7 +131,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			continue
 		}
 
-		// get the required resource that Crossplane provided to us for this external reference
+		// get the required resource(s) that Crossplane provided to us for this external reference
 		resources, ok, err := request.GetRequiredResource(req, r.ID)
 		if err != nil {
 			response.Fatal(rsp, errors.Wrapf(err, "cannot get external resource %q", r.ID))
@@ -141,13 +142,14 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			continue
 		}
 
-		// we always expect exactly one external resource since we ask for a specific one
-		u := resources[0].Resource
-
-		// set the resource's observed state on the runtime node, so KRO has access to it for later evaluations etc.
+		// set the resource(s) observed state on the runtime node, so KRO has access to it for later evaluations etc.
 		if node, ok := nodesByID[r.ID]; ok {
-			f.log.Debug("SetObserved external ref resource", "id", r.ID, "name", u.GetName(), "namespace", u.GetNamespace())
-			node.SetObserved([]*unstructured.Unstructured{u})
+			observed := make([]*unstructured.Unstructured, len(resources))
+			for i, res := range resources {
+				observed[i] = res.Resource
+			}
+			f.log.Debug("SetObserved external ref", "id", r.ID, "externalRef", r.ExternalRef, "count", len(observed))
+			node.SetObserved(observed)
 		}
 	}
 
@@ -485,9 +487,19 @@ func (f *Function) externalRefSelectorsFromRuntime(rt *runtime.Runtime, xrNamesp
 		}
 
 		if node.Spec.Meta.Type == graph.NodeTypeExternalCollection {
-			// TODO: Implement external collection selector support.
-			// This requires Crossplane's ResourceSelector to support label matching.
-			f.log.Debug("External collection selectors not yet implemented", "id", node.Spec.Meta.ID)
+			// attempt to build selectors for this external collection
+			selector, err := f.externalCollectionSelector(node)
+			if err != nil {
+				if runtime.IsDataPending(err) {
+					f.log.Debug("External collection not resolvable yet, skipping", "id", node.Spec.Meta.ID)
+					continue
+				}
+				return nil, errors.Wrapf(err, "cannot build selector for external collection %q", node.Spec.Meta.ID)
+			}
+			if selector != nil {
+				// we got a fully formed selector for this external collection, add it the list
+				selectors[node.Spec.Meta.ID] = selector
+			}
 			continue
 		}
 
@@ -510,23 +522,74 @@ func (f *Function) externalRefSelectorsFromRuntime(rt *runtime.Runtime, xrNamesp
 			continue
 		}
 
-		u := desired[0]
-		namespace := u.GetNamespace()
+		template := desired[0]
+		namespace := template.GetNamespace()
 		if namespace == "" {
 			namespace = xrNamespace
 		}
 
 		selectors[node.Spec.Meta.ID] = &fnv1.ResourceSelector{
-			ApiVersion: u.GetAPIVersion(),
-			Kind:       u.GetKind(),
+			ApiVersion: template.GetAPIVersion(),
+			Kind:       template.GetKind(),
 			Match: &fnv1.ResourceSelector_MatchName{
-				MatchName: u.GetName(),
+				MatchName: template.GetName(),
 			},
 			Namespace: &namespace,
 		}
 	}
 
 	return selectors, nil
+}
+
+// externalCollectionSelector resolves an external collection node's template and
+// extracts the label selector to build a Crossplane ResourceSelector with MatchLabels.
+func (f *Function) externalCollectionSelector(node *runtime.Node) (*fnv1.ResourceSelector, error) {
+	// compute/resolve all the expressions in this external collection's template
+	desired, err := node.GetDesired()
+	if err != nil {
+		return nil, err
+	}
+	if len(desired) == 0 {
+		return nil, nil
+	}
+	template := desired[0]
+
+	// extract the selector from the unstructured data
+	selectorRaw, found, err := unstructured.NestedMap(template.Object, "metadata", "selector")
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot extract selector from resolved template")
+	}
+	if !found {
+		return nil, errors.New("resolved template has no selector")
+	}
+
+	ls := &metav1.LabelSelector{}
+	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(selectorRaw, ls); err != nil {
+		return nil, errors.Wrapf(err, "cannot convert selector")
+	}
+
+	labels := make(map[string]string)
+	if ls.MatchLabels != nil {
+		maps.Copy(labels, ls.MatchLabels)
+	}
+
+	selector := &fnv1.ResourceSelector{
+		ApiVersion: template.GetAPIVersion(),
+		Kind:       template.GetKind(),
+		Match: &fnv1.ResourceSelector_MatchLabels{
+			MatchLabels: &fnv1.MatchLabels{
+				Labels: labels,
+			},
+		},
+	}
+
+	// Namespace: if explicitly set, use it. If empty, omit entirely
+	// to match all namespaces (per Crossplane's ResourceSelector semantics).
+	if ns := template.GetNamespace(); ns != "" {
+		selector.Namespace = &ns
+	}
+
+	return selector, nil
 }
 
 // groupObservedByNodeID groups observed composed resources by their runtime

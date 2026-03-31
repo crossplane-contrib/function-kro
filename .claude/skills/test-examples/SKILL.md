@@ -1,6 +1,7 @@
 ---
 name: test-examples
 description: End-to-end validation of function-kro examples. Creates a kind cluster, installs Crossplane and extensions, then executes each example from example/README.md — running commands, interpreting output, and making pass/fail assertions. Stops on first failure.
+arguments: Optional example filter — a case-insensitive substring matched against example headings. If provided, only matching examples are run. If omitted, all examples are run.
 ---
 
 # Test Examples Skill
@@ -48,6 +49,14 @@ For each example section, identify:
 3. **Commands** — all shell commands in code blocks, in order
 4. **Assertions** — what the README says you should observe (e.g., "confirm that X is absent," "see the fatal error," "note that conditional resources are only included when...")
 5. **Interactive steps** — commands that modify state mid-example (patches, alternate file applies)
+
+### Filtering
+
+If an argument was provided (e.g., `/test-examples external`), filter the parsed examples to only those whose heading contains the argument as a case-insensitive substring. For example, "external" matches "External Reference Example".
+
+If no examples match, **STOP** and report an error listing the available example names.
+
+If no argument was provided, run all examples.
 
 ---
 
