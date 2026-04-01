@@ -34,19 +34,10 @@ The commits can be squashed into a single commit before merging if desired, but 
 ```
 patches/
 ├── UPGRADE_PROCESS.md           # This document
-├── v{OLD}_PATCHES.md            # Adaptations we made for the previous version
-├── v{OLD}_to_v{NEW}_CHANGES.md  # Analysis of upstream changes (AI-generated)
-└── v{NEW}_PATCHES.md            # Adaptations for the new version (created during upgrade)
+└── v{CURRENT}_PATCHES.md        # Adaptations for the current version (the only patches doc)
 ```
 
-**Example for v0.7.1 → v0.8.0:**
-```
-patches/
-├── UPGRADE_PROCESS.md
-├── v0.7.1_PATCHES.md            # What we changed for v0.7.1
-├── v0.8.x_UPSTREAM_CHANGES.md   # What upstream changed in v0.8.x
-└── v0.8.x_PATCHES.md            # What we changed for v0.8.x (created during upgrade)
-```
+**Only one patches doc should exist at a time** — the one for the current baseline version. Old patches docs and pre-upgrade analysis docs must be deleted after an upgrade completes (see Phase 5). Keeping superseded docs around confuses agents and humans alike — they read stale planning notes (e.g., "metrics may not work") and treat them as current truth, even when the actual outcome is different.
 
 ---
 
@@ -126,9 +117,9 @@ git clone --depth 1 --branch v{NEW} \
     https://github.com/kubernetes-sigs/kro.git /tmp/kro-new
 ```
 
-### Step 1.3: Generate Upstream Changes Analysis
+### Step 1.3: Analyze Upstream Changes
 
-Have an AI agent (or manually) analyze the differences and create `v{OLD}_to_v{NEW}_CHANGES.md`:
+Have an AI agent (or manually) analyze the differences. This analysis is a **working document for the upgrade conversation only** — do NOT commit it to the repo (see Phase 5 for cleanup rules).
 
 ```bash
 # Compare the relevant directories
@@ -507,7 +498,9 @@ Let the human handle manual testing and validation for now until we have more au
 ### Step 5.1: Update Documentation
 
 - [ ] Update `patches/v{NEW}_PATCHES.md` with final adaptations
-- [ ] Archive or update `patches/v{OLD}_to_v{NEW}_CHANGES.md`
+- [ ] **Delete `patches/v{OLD}_PATCHES.md`** — superseded by the new patches doc
+- [ ] **Delete any `patches/v{OLD}_to_v{NEW}_CHANGES.md`** — this was a working doc for the upgrade, not a permanent artifact. Keeping it causes agents to treat pre-upgrade speculation as current truth.
+- [ ] Verify only `UPGRADE_PROCESS.md` and `v{NEW}_PATCHES.md` remain in `patches/`
 - [ ] Update `AGENTS.md` if architecture changed significantly
 - [ ] Update `README.md` with new KRO version
 
