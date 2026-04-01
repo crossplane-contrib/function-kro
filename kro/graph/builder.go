@@ -22,7 +22,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"golang.org/x/exp/maps"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	apiservercel "k8s.io/apiserver/pkg/cel"
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
@@ -267,7 +267,7 @@ func (b *Builder) NewResourceGraphDefinition(rg *v1beta1.ResourceGraph, xrSchema
 // can extract CEL expressions from the entire resource in a single pass.
 func (b *Builder) buildExternalRefResource(
 	externalRef *v1beta1.ExternalRef) (map[string]interface{}, error) {
-	result, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(externalRef)
+	result, err := runtime.DefaultUnstructuredConverter.ToUnstructured(externalRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert ExternalRef to unstructured: %w", err)
 	}
