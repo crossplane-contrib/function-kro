@@ -100,7 +100,21 @@ For each modified file, run:
 
 The `-u` flag reuses the existing clone. The `-l 0` flag shows the complete diff without truncation.
 
-### 4.2 Assess Documentation Quality
+### 4.2 Assess Functional Necessity
+
+**This check is critical.** For each diff hunk in each modified file, ask:
+
+> "If this change were reverted to match upstream exactly, would function-kro fail to compile, fail tests, or produce incorrect behavior?"
+
+If the answer is no, the change is **not functionally required** and should be flagged for revert. Common violations:
+- Extracting helpers to deduplicate upstream code
+- Reformatting, renaming, or reordering upstream code
+- Adding comments to upstream code we didn't otherwise need to modify
+- Refactoring upstream patterns for style or readability
+
+Flag these as **REVERT: not functionally required — cosmetic change adds upgrade debt**.
+
+### 4.3 Assess Documentation Quality
 
 For each modified file, evaluate:
 
@@ -171,6 +185,9 @@ Present a final report with this structure:
 - Upstream-only files: {N} (documented: {M}, missing: {K})
 - Phantom entries: {N}
 - Overall accuracy: {percentage or qualitative}
+
+### Changes to Revert (Not Functionally Required)
+{List modifications that should be reverted to match upstream because they are cosmetic, not functional. For each, name the file and describe the unnecessary change. Or "None — all modifications are functionally required."}
 
 ### Issues Found
 {List of issues, or "None — documentation is accurate"}

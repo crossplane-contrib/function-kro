@@ -36,12 +36,18 @@ type ResourceGraph struct {
 // ExternalRefMetadata contains metadata for referencing an external resource.
 type ExternalRefMetadata struct {
 	// Name is the name of the external resource to reference.
-	// +kubebuilder:validation:Required
+	// Mutually exclusive with Selector.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name,omitempty"`
 	// Namespace is the namespace of the external resource.
-	// If empty, the instance's namespace will be used.
 	// +kubebuilder:validation:Optional
 	Namespace string `json:"namespace,omitempty"`
+	// Selector is a label selector for collection external references.
+	// When set, all resources matching the selector are included.
+	// Mutually exclusive with Name.
+	// +kubebuilder:validation:Optional
+	Selector *metav1.LabelSelector `json:"selector,omitempty"`
 }
 
 // ExternalRef is a reference to an external resource that already exists in the cluster.

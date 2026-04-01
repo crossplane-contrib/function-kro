@@ -49,7 +49,7 @@ Crossplane RunFunctionRequest
 │     - Evaluate GetDesired (hard resolve for resources/collections│
 │       soft resolve for instance)                                 │
 │     - Handle collections (forEach → {id}-{name}, ...)            │
-│     - Evaluate readiness (ReadyTrue/False or ReadyUnspecified)   │
+│     - Evaluate readiness (CheckReadiness → error sentinel)      │
 │  8. Build XR status from instance node's soft-resolved fields    │
 └──────────────────────────────────────────────────────────────────┘
     ↓
@@ -72,7 +72,8 @@ kro/graph/builder.go         Builds validated resource graphs
     ↓
 kro/runtime/                 Executes the graph, evaluates CEL
     ├── runtime.go           Runtime interface, FromGraph constructor
-    ├── node.go              Runtime node (GetDesired, IsReady, IsIgnored, etc.)
+    ├── node.go              Runtime node (GetDesired, CheckReadiness, IsIgnored, etc.)
+    ├── node_resolve.go      Resolution helpers (soft/hard resolve, collections)
     ├── collection.go        Collection identity matching, index labels
     └── resolver/            Template field resolution (path-based value injection)
     ↓
@@ -97,6 +98,7 @@ function-kro/
 │   ├── cel/                 # CEL environment setup and expression evaluation
 │   │   ├── ast/             # AST inspection for dependency extraction
 │   │   └── library/         # Custom CEL functions (random)
+│   ├── features/            # Feature gate definitions
 │   ├── graph/               # Graph building and validation
 │   │   ├── builder.go       # Main graph builder (key file)
 │   │   ├── node.go          # Node types and graph node structure
@@ -110,10 +112,12 @@ function-kro/
 │   │   ├── node.go          # Runtime node (GetDesired, IsReady, IsIgnored, etc.)
 │   │   ├── collection.go    # Collection identity matching, index labels
 │   │   └── resolver/        # Template field resolution engine
-│   └── metadata/            # Kubernetes metadata utilities (labels, finalizers, GVK)
+│   ├── metadata/            # Kubernetes metadata utilities (labels, finalizers, GVK)
+│   └── testutil/            # Test helpers (generator, fake discovery/resolver)
 │
 ├── patches/                 # Upgrade documentation
-│   ├── v0.8.x_PATCHES.md   # Comprehensive v0.8.x adaptation reference
+│   ├── v0.9.0_PATCHES.md   # Current adaptation reference (v0.9.0 baseline)
+│   ├── v0.8.x_PATCHES.md   # Historical v0.8.x adaptation reference
 │   └── UPGRADE_PROCESS.md   # Process for upgrading from upstream KRO
 ├── package/                 # Crossplane package definition
 ├── example/                 # Usage examples (basic, collections, conditionals, externalref, readiness)
@@ -152,6 +156,7 @@ The graph builder categorizes each resource into a NodeType that determines runt
 - **NodeTypeResource**: Standard managed resource. Hard resolution (fails if any CEL expression can't resolve).
 - **NodeTypeCollection**: forEach-expanded resource. Hard resolution per expansion item. Named `{id}-{metadata.name}` in composed output (e.g., `subnets-my-app-us-east-1`).
 - **NodeTypeExternal**: ExternalRef read-only resource. Identity-only resolution (name/namespace). Excluded from desired output.
+- **NodeTypeExternalCollection**: ExternalRef with selector, expands to multiple observed resources. Excluded from desired output.
 - **NodeTypeInstance**: The XR itself. Soft resolution (best-effort partial status — skips unresolvable fields).
 
 See `kro/graph/node.go` for type definitions, `kro/runtime/node.go` for evaluation logic.
@@ -231,6 +236,30 @@ cases := map[string]struct {
         want:   want{...},
     },
 }
+```
+
+### Test Assertion Conventions
+
+All `RunFunction` tests (in `fn_test.go`) compare the **full expected response** using `cmp.Diff` with `protocmp.Transform()`, and check errors with `cmpopts.EquateErrors()`. Follow this pattern even for standalone test functions that live outside the main table:
+
+```go
+if diff := cmp.Diff(want, rsp, protocmp.Transform()); diff != "" {
+    t.Errorf("...\nf.RunFunction(...): -want rsp, +got rsp:\n%s", reason, diff)
+}
+
+if diff := cmp.Diff(nil, err, cmpopts.EquateErrors()); diff != "" {
+    t.Errorf("...\nf.RunFunction(...): -want err, +got err:\n%s", reason, diff)
+}
+```
+
+Do **not** use testify assertions (`require.NoError`, `assert.Contains`, etc.) or manual field-by-field checks in `fn_test.go`. Construct the full expected `*fnv1.RunFunctionResponse` — including `Results` for fatal cases — and diff it. This keeps all tests consistent and makes failures easy to read.
+
+### End-to-End Example Validation
+
+The `/test-examples` skill validates all examples from `example/README.md` end-to-end against a real kind cluster with AWS resources. It creates the cluster, installs Crossplane and extensions, executes each example's commands, makes automated pass/fail assertions based on the README's descriptions, and cleans up. Stops on first failure.
+
+```
+/test-examples
 ```
 
 ### Linting
@@ -319,10 +348,11 @@ The runtime deduplicates CEL expression evaluation via a shared `expressionsCach
 
 ## Key Reference Documents
 
-- `patches/v0.8.x_PATCHES.md` — Comprehensive reference for all KRO v0.8.x adaptations (the definitive source for what changed from upstream)
+- `patches/v0.9.0_PATCHES.md` — Comprehensive reference for all KRO v0.9.0 adaptations (the definitive source for what changed from upstream)
+- `patches/v0.8.x_PATCHES.md` — Historical reference for KRO v0.8.x adaptations (superseded by v0.9.0)
 - `patches/UPGRADE_PROCESS.md` — Process for upgrading from upstream KRO releases
 - `spec-desired-ssa.md` — Original SSA design spec (references older API names; implementation evolved)
-- `example/README.md` — Working examples for all major features (basic, collections, conditionals, externalref, readiness)
+- `example/README.md` — Working examples for all major features (basic, collections, conditionals, externalref, readiness, omit, collection-limits)
 
 ## Auditing Our Code Against Upstream KRO
 
@@ -332,7 +362,7 @@ The runtime deduplicates CEL expression evaluation via a shared `expressionsCach
 
 Two skills automate the audit process end-to-end:
 
-- **`/audit-patches v<tag>`** — Validates that `patches/v*_PATCHES.md` accurately documents all modifications, additions, and exclusions. Use when checking documentation accuracy or before an upgrade.
+- **`/audit-patches v<tag>`** — Validates that `patches/v*_PATCHES.md` accurately documents all modifications, additions, and exclusions. Use when checking documentation accuracy or before an upgrade. Current baseline: `v0.9.0`.
 - **`/review-kro-adaptations v<tag>`** — Principal-level engineering review of every adaptation. Assesses minimality, correctness, maintainability, and whether a senior engineer would make different choices. Use for code quality assessment.
 
 Both skills use the diff script under the hood, clone upstream once, and produce structured reports.

@@ -58,6 +58,8 @@ const (
 	ResourceGraphDefinitionNameLabel      = LabelKROPrefix + "resource-graph-definition-name"
 	ResourceGraphDefinitionNamespaceLabel = LabelKROPrefix + "resource-graph-definition-namespace"
 	ResourceGraphDefinitionVersionLabel   = LabelKROPrefix + "resource-graph-definition-version"
+	// GraphRevisionHashLabel stores a label-safe representation of the GraphRevision spec hash.
+	GraphRevisionHashLabel = LabelKROPrefix + "graph-revision-hash"
 )
 
 // IsKROOwned returns true if the resource is owned by KRO.
@@ -159,30 +161,48 @@ func NewResourceGraphDefinitionLabeler(rgMeta metav1.Object) GenericLabeler {
 	}
 }
 
+// NewGraphRevisionHashLabeler returns a new labeler that sets a label-safe
+// representation of the GraphRevision spec hash on a resource.
+func NewGraphRevisionHashLabeler(specHash string) GenericLabeler {
+	return map[string]string{
+		GraphRevisionHashLabel: specHash,
+	}
+}
+
 // NewInstanceLabeler returns a new labeler that sets the InstanceLabel and
 // InstanceIDLabel labels on a resource. The InstanceLabel is the namespace
 // and name of the instance that was reconciled to create the resource.
 // It also includes the instance's GVK to allow child
 // resource handlers to filter events by parent instance type.
-func NewInstanceLabeler(instance *unstructured.Unstructured) GenericLabeler {
+func NewInstanceLabeler(instance *unstructured.Unstructured, namespaced bool) GenericLabeler {
 	gvk := instance.GroupVersionKind()
+	labels := map[string]string{
+		InstanceIDLabel:      string(instance.GetUID()),
+		InstanceLabel:        instance.GetName(),
+		InstanceGroupLabel:   gvk.Group,
+		InstanceVersionLabel: gvk.Version,
+		InstanceKindLabel:    gvk.Kind,
+	}
+	if namespaced {
+		labels[InstanceNamespaceLabel] = instance.GetNamespace()
+	}
+	return labels
+}
+
+// NewNodeLabeler returns a new labeler for child resources
+// Only includes app.kubernetes.io/managed-by label, as other labels come from the parent labeler.
+func NewNodeLabeler() GenericLabeler {
 	return map[string]string{
-		InstanceIDLabel:        string(instance.GetUID()),
-		InstanceLabel:          instance.GetName(),
-		InstanceNamespaceLabel: instance.GetNamespace(),
-		InstanceGroupLabel:     gvk.Group,
-		InstanceVersionLabel:   gvk.Version,
-		InstanceKindLabel:      gvk.Kind,
+		ManagedByLabelKey: ManagedByKROValue,
 	}
 }
 
-// NewKROMetaLabeler returns a new labeler that sets the OwnedLabel,
-// KROVersion, and ManagedBy labels on a resource.
+// NewKROMetaLabeler returns a new labeler that sets the OwnedLabel, and
+// KROVersion labels on a resource.
 func NewKROMetaLabeler() GenericLabeler {
 	return map[string]string{
-		OwnedLabel:        "true",
-		KROVersionLabel:   safeVersion(version.GetVersionInfo().GitVersion),
-		ManagedByLabelKey: ManagedByKROValue,
+		OwnedLabel:      "true",
+		KROVersionLabel: safeVersion(version.GetVersionInfo().GitVersion),
 	}
 }
 

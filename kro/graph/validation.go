@@ -17,10 +17,14 @@ package graph
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	"github.com/crossplane-contrib/function-kro/kro/cel/ast"
+	"github.com/crossplane-contrib/function-kro/kro/metadata"
 )
 
 var (
@@ -102,27 +106,22 @@ func isKROReservedWord(word string) bool {
 	return reservedKeyWords.Has(word)
 }
 
-// validateResourceIDs performs basic validation on a given ResourceGraph.
-// It checks that there are no duplicate resource ids and that the
-// resource ids are conformant to the KRO naming convention.
-//
-// The KRO naming convention is as follows:
-// - The id should start with a lowercase letter.
-// - The id should only contain alphanumeric characters.
-// - Does not contain any special characters, underscores, or hyphens.
-func validateResourceIDs(rgd *v1beta1.ResourceGraph) error {
+// validateResourceIDs validates the naming conventions of the resource IDs
+// and the forEach constraints defined in rgdConfig.
+// In function-kro, we skip Kind validation since Crossplane manages the XR CRD.
+func validateResourceIDs(rgd *v1beta1.ResourceGraph, rgdConfig RGDConfig) error {
 	seen := make(map[string]struct{})
 	for _, res := range rgd.Resources {
 		if isKROReservedWord(res.ID) {
-			return fmt.Errorf("id %s is a reserved keyword in KRO", res.ID)
+			return fmt.Errorf("%s: id %s is a reserved keyword in KRO", ErrNamingConvention, res.ID)
 		}
 
 		if !isValidResourceID(res.ID) {
-			return fmt.Errorf("id %s is not a valid KRO resource id: must be lower camelCase", res.ID)
+			return fmt.Errorf("%s: id %s is not a valid KRO resource id: must be lower camelCase", ErrNamingConvention, res.ID)
 		}
 
 		if _, ok := seen[res.ID]; ok {
-			return fmt.Errorf("found duplicate resource IDs %s", res.ID)
+			return fmt.Errorf("%s: found duplicate resource IDs %s", ErrNamingConvention, res.ID)
 		}
 		seen[res.ID] = struct{}{}
 	}
@@ -133,7 +132,7 @@ func validateResourceIDs(rgd *v1beta1.ResourceGraph) error {
 		resourceIDs.Insert(res.ID)
 	}
 	for _, res := range rgd.Resources {
-		if err := validateForEachDimensions(res, resourceIDs); err != nil {
+		if err := validateForEachDimensions(res, resourceIDs, rgdConfig); err != nil {
 			return err
 		}
 	}
@@ -147,8 +146,11 @@ func validateResourceIDs(rgd *v1beta1.ResourceGraph) error {
 // - Iterator names are not reserved keywords
 // - Iterator names do not conflict with resource IDs
 // - Iterator names are unique within the same resource
-func validateForEachDimensions(res *v1beta1.Resource, resourceIDs sets.String) error {
-	//TODO: Validate a maximum number dimensions
+func validateForEachDimensions(res *v1beta1.Resource, resourceIDs sets.String, rgdConfig RGDConfig) error {
+	if len(res.ForEach) > rgdConfig.MaxCollectionDimensionSize {
+		return fmt.Errorf("resource %q: forEach cannot have more "+
+			"than %d dimensions, got %d", res.ID, rgdConfig.MaxCollectionDimensionSize, len(res.ForEach))
+	}
 
 	if len(res.ForEach) == 0 {
 		return nil
@@ -246,4 +248,107 @@ func validateCombinableResourceFields(res *v1beta1.Resource) error {
 	return nil
 }
 
+// validateTemplateConstraints enforces template-level constraints before parsing expressions.
+// Keep this small and focused on invariants that must hold regardless of CEL.
+func validateTemplateConstraints(
+	rgResource *v1beta1.Resource,
+	resourceObject map[string]interface{},
+	resourceNamespaced bool,
+	instanceNamespaced bool,
+) error {
+	namespaceValue, found, err := unstructured.NestedFieldNoCopy(resourceObject, "metadata", "namespace")
+	if err != nil {
+		return fmt.Errorf("resource %q has invalid metadata.namespace: %w", rgResource.ID, err)
+	}
 
+	if !resourceNamespaced {
+		if found {
+			return fmt.Errorf("resource %q is cluster-scoped and must not set metadata.namespace", rgResource.ID)
+		}
+	}
+	if resourceNamespaced && !instanceNamespaced {
+		// External collection refs (selector-based) are allowed to omit namespace
+		// on cluster-scoped instances — this means "list across all namespaces".
+		isExternalCollection := rgResource.ExternalRef != nil && rgResource.ExternalRef.Metadata.Selector != nil
+		if !isExternalCollection {
+			if !found {
+				return fmt.Errorf("resource %q is namespaced and must set metadata.namespace when the instance CRD is cluster-scoped", rgResource.ID)
+			}
+			if ns, ok := namespaceValue.(string); !ok || strings.TrimSpace(ns) == "" {
+				return fmt.Errorf("resource %q is namespaced and must set metadata.namespace when the instance CRD is cluster-scoped", rgResource.ID)
+			}
+		}
+	}
+
+	// Validate that users don't set KRO-owned labels
+	if err := validateNoKROOwnedLabels(rgResource.ID, resourceObject); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateIdentityFields checks that omit() is not used on resource identity
+// fields. These fields are special to kro's ownership model — omitting them
+// silently breaks SSA ownership and resource tracking, unlike schema-required
+// fields which fail loudly on server-side apply.
+//
+// Identity fields:
+//   - metadata.name: always required for any Kubernetes resource
+//   - metadata.namespace: required when the instance is cluster-scoped and the
+//     resource itself is namespaced (no instance namespace to inherit)
+func validateIdentityFields(nodes map[string]*Node, inspector *ast.Inspector, isInstanceNamespaced bool) error {
+	for _, node := range nodes {
+		for _, v := range node.Variables {
+			// NOTE: Always assume namespaced — Crossplane manages resource scope.
+			if !isRequiredIdentityField(v.Path, true, isInstanceNamespaced) {
+				continue
+			}
+			result, err := inspector.Inspect(v.Expression.Original)
+			if err != nil {
+				return fmt.Errorf("resource %q: failed to inspect expression at path %q: %w", node.Meta.ID, v.Path, err)
+			}
+			if result.UsesOmit() {
+				return fmt.Errorf("resource %q: omit() cannot be used at path %q — the field is required and must resolve to a concrete value", node.Meta.ID, v.Path)
+			}
+		}
+	}
+	return nil
+}
+
+// isRequiredIdentityField reports whether the given field path is a resource
+// identity field that must resolve to a concrete value. metadata.name is always
+// required. metadata.namespace is required only when the resource is namespaced
+// and the instance is cluster-scoped (no namespace to inherit).
+func isRequiredIdentityField(path string, resourceNamespaced, instanceNamespaced bool) bool {
+	switch path {
+	case MetadataNamePath:
+		return true
+	case MetadataNamespacePath:
+		return resourceNamespaced && !instanceNamespaced
+	default:
+		return false
+	}
+}
+
+// validateNoKROOwnedLabels enforces that the resource template doesn't define any label with
+// LabelKROPrefix (kro.run/). These labels are reserved for internal use ONLY.
+func validateNoKROOwnedLabels(resourceID string, resourceObject map[string]interface{}) error {
+	labelsRaw, found, err := unstructured.NestedFieldCopy(resourceObject, "metadata", "labels")
+	if err != nil || !found {
+		return nil
+	}
+
+	labelsMap, ok := labelsRaw.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	for key := range labelsMap {
+		if strings.HasPrefix(key, metadata.LabelKROPrefix) {
+			return fmt.Errorf("invalid label for resource %q. labels with prefix %q are reserved for internal use", resourceID, metadata.LabelKROPrefix)
+		}
+	}
+
+	return nil
+}

@@ -187,10 +187,13 @@ rm -rf kro/graph/variable/
 rm -rf kro/cel/
 rm -rf kro/runtime/
 rm -rf kro/metadata/
+rm -rf kro/testutil/
+rm -rf kro/features/
 
 # Keep these files (our additions):
 # - kro/graph/schema/resolver/schema_map_resolver.go
 # - kro/graph/schema/resolver/crd_resolver.go
+# - kro/graph/schema/resolver/combined_resolver.go
 # - kro/graph/schema/resolver/resolver.go (will need merge)
 # - kro/graph/schema/schema.go (will need merge)
 ```
@@ -198,12 +201,20 @@ rm -rf kro/metadata/
 ### Step 2.2: Copy New Files
 
 ```bash
-# Copy from upstream
+# Copy from upstream (see "What We Vendor" allowlist below)
 cp -r /tmp/kro-new/pkg/graph/* kro/graph/
 cp -r /tmp/kro-new/pkg/cel/* kro/cel/
 cp -r /tmp/kro-new/pkg/runtime/* kro/runtime/
 cp -r /tmp/kro-new/pkg/metadata/* kro/metadata/
+cp -r /tmp/kro-new/pkg/testutil/* kro/testutil/
+cp -r /tmp/kro-new/pkg/features/* kro/features/
 ```
+
+**IMPORTANT: Always copy upstream files verbatim first.** Never write vendored files
+from scratch — always start from upstream's version, then modify. Writing files fresh
+risks introducing formatting divergence, missing code, and unnecessary diff noise
+against upstream. The copy-then-modify approach ensures our diffs show only the
+intentional adaptations.
 
 **COMMIT CHECKPOINT 1: Raw upstream code**
 
@@ -322,6 +333,8 @@ Every adaptation we maintain exists to bridge a specific gap between upstream's 
 4. **Watch for new gaps.** If upstream added a new feature that calls the REST mapper or requires API access, that needs a *new* adaptation — not just re-applying old ones. The patches doc won't mention these because they didn't exist before.
 
 5. **The adaptation surface should shrink over time, not grow.** Each upgrade is a chance to reduce divergence. If upstream moved closer to what we need, take advantage of it.
+
+6. **Every adaptation must be functionally required.** Do not make cosmetic changes, refactors, deduplication, or "improvements" to upstream code. If the upstream code compiles and works correctly without a change, do not make that change. Drive-by cleanups (extracting helpers, renaming variables, reformatting) create diff noise that makes every future upgrade harder. The only valid reason to modify an upstream file is to bridge a functional gap between upstream's controller model and our composition function model.
 
 #### Decision Framework
 
@@ -570,28 +583,32 @@ the upgrade process. Squashing is optional and depends on team preference.
 |------|---------|
 | `kro/graph/schema/resolver/schema_map_resolver.go` | Resolve schemas from Crossplane's required_schemas |
 | `kro/graph/schema/resolver/crd_resolver.go` | Resolve schemas from CRDs (fallback path) |
+| `kro/graph/schema/resolver/combined_resolver.go` | Combined resolver factories pairing Crossplane schemas with core K8s types |
 
 ### Files We Modify
 
-Based on the v0.8.3 audit, these are all files we modify from upstream:
+Based on the v0.9.0 audit, these are all files we modify from upstream:
 
 | File | Adaptation |
 |------|------------|
 | `kro/graph/builder.go` | Constructor accepts resolver; NewResourceGraphDefinition accepts schema; remove SimpleSchema/CRD gen; remove REST mapper |
 | `kro/graph/node.go` | Remove `GVR` and `Namespaced` from NodeMeta |
-| `kro/graph/validation.go` | API type adaptation; remove `validateResourceGraphDefinitionNamingConventions` and `validateTemplateConstraints` |
-| `kro/graph/schema/resolver/resolver.go` | Add combined resolver factories and `combinedResolver` type |
+| `kro/graph/validation.go` | API type adaptation; merge validation functions; always-namespaced assumption |
 | `kro/graph/schema/schema.go` | Add `DeepCopySchema` |
-| `kro/runtime/node.go` | Remove `normalizeNamespaces` and all namespace auto-defaulting |
+| `kro/runtime/node.go` | Remove `normalizeNamespaces` call |
+| `kro/runtime/node_resolve.go` | Remove `normalizeNamespaces` method |
 | `kro/metadata/finalizers.go` | Import path change |
 | `kro/metadata/labels.go` | Import path change |
 | `kro/metadata/groupversion.go` | Import path change; remove `GetResourceGraphDefinitionInstanceGVR` |
+| `kro/testutil/generator/resourcegraphdefinition.go` | Adapted for v1beta1 types; added `BuildTestXRSchema` |
 
 ### Files We Intentionally Exclude
 
 | Upstream File | Reason |
 |---------------|--------|
 | `graph/crd/*` (6 files) | CRD synthesis/compat — function-kro doesn't generate CRDs |
+| `graph/hash/*` | Revision hashing — function-kro doesn't track revisions |
+| `graph/revisions/*` (3 files) | Revision registry/resolver/metrics — controller-only infrastructure |
 | `metadata/owner_reference.go` | Owner reference helpers — Crossplane manages resource ownership |
 
 ### What We Vendor (Allowlist)
@@ -603,21 +620,25 @@ These are the **only** upstream `pkg/` packages we copy:
 | Upstream Path | Our Path | What It Provides |
 |---------------|----------|------------------|
 | `pkg/graph/` | `kro/graph/` | Graph building, DAG, parsing, schema resolution, validation |
-| `pkg/cel/` | `kro/cel/` | CEL environment, AST inspection, custom libraries |
+| `pkg/cel/` | `kro/cel/` | CEL environment, AST inspection, custom libraries, expression types |
 | `pkg/runtime/` | `kro/runtime/` | Runtime execution, template resolution |
 | `pkg/metadata/` | `kro/metadata/` | Labels, finalizers, GVK utilities |
+| `pkg/features/` | `kro/features/` | Feature gate definitions |
+| `pkg/testutil/` | `kro/testutil/` | Test helpers: generator, fake discovery/resolver |
 
-**IMPORTANT: If upstream introduces a new `pkg/` directory, do NOT copy it** unless it is a subdirectory of one of the four packages above or you have explicitly evaluated that function-kro needs it. The default should be to skip unknown packages.
+**IMPORTANT: If upstream introduces a new `pkg/` directory, do NOT copy it** unless it is a subdirectory of one of the packages above or you have explicitly evaluated that function-kro needs it. The default should be to skip unknown packages.
 
 Examples of upstream packages we skip (non-exhaustive):
 
 | Upstream Package | Why We Skip It |
 |------------------|----------------|
-| `api/` | We have our own input types (`input/v1beta1/`) |
+| `api/` (or `apis/`) | We have our own input types (`input/v1beta1/`) |
 | `pkg/controller/` | Replaced by Crossplane function framework (`fn.go`) |
 | `pkg/simpleschema/` | Crossplane provides OpenAPI schemas directly |
 | `pkg/dynamiccontroller/` | Replaced by Crossplane function framework |
-| `pkg/testutil/` | Upstream test utilities tied to controller patterns we don't use |
+| `pkg/client/` | Kubernetes client utilities — no API access in functions |
+| `pkg/metrics/` | Controller metrics — not applicable |
+| `pkg/requeue/` | Controller requeue logic — not applicable |
 
 ---
 

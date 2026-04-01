@@ -14,7 +14,10 @@
 
 package runtime
 
-import "github.com/crossplane-contrib/function-kro/kro/graph/variable"
+import (
+	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
+	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
+)
 
 // expressionEvaluationState tracks per-expression evaluation state.
 // Expressions are cached globally and shared via pointers - if the same
@@ -22,8 +25,9 @@ import "github.com/crossplane-contrib/function-kro/kro/graph/variable"
 //
 // This design mirrors the old runtime's proven caching architecture.
 type expressionEvaluationState struct {
-	// Expression is the CEL expression string.
-	Expression string
+	// Expression holds the CEL expression with its pre-compiled Program.
+	// The Program was compiled at graph build time and is reused here.
+	Expression *krocel.Expression
 
 	// Dependencies is the list of resource IDs this expression depends on.
 	// All dependencies must be resolved/ready before evaluation.
@@ -40,4 +44,20 @@ type expressionEvaluationState struct {
 
 	// ResolvedValue holds the cached result. Nil until Resolved=true.
 	ResolvedValue any
+}
+
+// EvalCached evaluates the expression with caching. If the expression was
+// already evaluated, the cached value is returned. Otherwise the expression
+// is evaluated against the filtered context, and the result is cached.
+func (e *expressionEvaluationState) EvalCached(ctx map[string]any) (any, error) {
+	if e.Resolved {
+		return e.ResolvedValue, nil
+	}
+	val, err := e.Expression.Eval(filterContext(ctx, e.Expression.References))
+	if err != nil {
+		return nil, err
+	}
+	e.Resolved = true
+	e.ResolvedValue = val
+	return val, nil
 }

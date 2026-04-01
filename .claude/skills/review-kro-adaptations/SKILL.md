@@ -20,6 +20,17 @@ You are performing a principal-level engineering review of every adaptation func
 - Simplicity over cleverness
 - Making the next upgrade easier, not harder
 
+### Scope: Our Changes Only
+
+**CRITICAL:** This review covers only code WE wrote or modified. It does NOT cover upstream KRO code we left unchanged.
+
+- **In modified files:** Only review the diff hunks — the lines we changed, added, or removed. Do not critique upstream code surrounding our changes (comments, style, patterns) unless we modified it.
+- **In local-only files:** Review everything — we own these entirely.
+- **Upstream code left untouched:** Do NOT suggest changes to upstream comments, formatting, naming, or patterns that we haven't modified. Touching upstream code to "improve" it adds diff noise that makes upgrades harder. If upstream has a stale comment and we didn't change it, that's upstream's problem, not ours.
+- **Dead code from our deletions:** If we deleted a caller but left the callee (e.g., we removed `validateResourceGraphDefinition` but left `isValidKindName`), note this as context but do NOT recommend deleting upstream's function — keeping it reduces our diff. Only flag dead code if WE introduced it in our additions.
+
+The goal is to minimize our fork delta. Every line we touch is a line we must reconcile on every upgrade. The best adaptation is the smallest one that achieves the goal.
+
 ---
 
 ## Phase 1: Inventory
@@ -59,29 +70,45 @@ Also read each local-only file in full.
 
 For each modified file and each local-only file, evaluate against ALL of the following criteria. Be thorough — this is the core of the review.
 
-### 3a. Minimality
+**Reminder:** Only review code in the diff hunks (our changes) and in local-only files. Do not critique upstream code we left untouched.
 
-- **Is every changed line necessary?** Could the same goal be achieved with fewer modifications?
+### 3a. Minimality — THE MOST IMPORTANT CHECK
+
+**The bar: every modification to an upstream file must be functionally required.** If removing a change would still leave the code compiling and working correctly as a Crossplane composition function, the change should not exist. This is the single most common failure mode in reviews — cosmetic improvements slip through because they "look reasonable" even though they aren't necessary.
+
+For each diff hunk in each modified file, ask this question explicitly:
+
+> "If I reverted this specific change back to upstream's version, would function-kro fail to compile, fail tests, or produce incorrect behavior?"
+
+If the answer is no, flag it as **REVERT: not functionally required**.
+
+Common violations to watch for — these are NEVER acceptable in upstream-vendored files:
+- **Extracting helpers** to deduplicate upstream code (e.g., creating a `stringMapSchema()` to replace repeated inline schemas)
+- **Reformatting** upstream code (reordering fields, changing line breaks, adjusting whitespace)
+- **Renaming** upstream variables or functions to "better" names
+- **Adding comments** to upstream code that we didn't otherwise modify
+- **Refactoring** upstream patterns we find inelegant (e.g., collapsing verbose structs)
+
+Also check:
 - **Are there changes that could be avoided** by using interfaces, adapters, or wrapper patterns instead of modifying upstream code directly?
-- **Are there drive-by changes** (formatting, renaming, reordering) mixed in with functional changes? These add upgrade noise for zero benefit.
-- **Could any modification be pushed upstream** instead of maintained as a fork delta? If a change would benefit all KRO users, it shouldn't live only here.
+- **Were files written from scratch when they should have been copied from upstream and modified?** This is a common source of unnecessary divergence. If the diff shows the entire file changed, check whether the upstream file was used as a starting point.
 
 ### 3b. Correctness
 
-- **Are there edge cases the modification doesn't handle?** Think about nil maps, empty slices, missing fields, unexpected types.
+- **Are there edge cases our modifications don't handle?** Think about nil maps, empty slices, missing fields, unexpected types — but only in code we changed.
 - **Does removing upstream code remove important safety checks?** When we delete validation or normalization, are we sure Crossplane handles it elsewhere, or are we creating a gap?
-- **Are error paths correct?** Do modifications properly propagate errors, or do they swallow/ignore failures?
-- **Are there concurrency concerns?** Shared state, missing locks, race conditions in the runtime execution path?
+- **Are error paths correct in our modifications?** Do our changes properly propagate errors, or do they swallow/ignore failures?
+- **Are there concurrency concerns in code we wrote?** Shared state, missing locks, race conditions.
 
 ### 3c. Clarity and Intent
 
-- **Would a new team member understand WHY each change was made** just by reading the code? Or does it require tribal knowledge?
-- **Are adapter/wrapper patterns clearly named** to signal "this is a Crossplane-specific bridge"?
-- **Are removed features clearly absent** or do they leave confusing dead code, unused parameters, or empty interfaces?
+- **Would a new team member understand WHY each of our changes was made** just by reading the code? Or does it require tribal knowledge?
+- **Are our adapter/wrapper patterns clearly named** to signal "this is a Crossplane-specific bridge"?
+- **Do our NOTE comments adequately explain why upstream code was removed?**
 
 ### 3d. Maintainability and Upgrade Cost
 
-- **How painful will each modification be during the next upgrade?** Rate each file: trivial (mechanical), moderate (needs thought), painful (likely to break).
+- **How painful will each of our modifications be during the next upgrade?** Rate each file: trivial (mechanical), moderate (needs thought), painful (likely to break).
 - **Are there modifications that could be restructured** to isolate our changes from upstream code? For example: wrapping upstream functions instead of modifying them, using composition over modification, or introducing thin adapter layers.
 - **Is there duplicated logic** between our adaptations and upstream code that could diverge silently?
 
@@ -93,8 +120,6 @@ This is the highest-level assessment. Step back from individual changes and ask:
 - **Are there architectural improvements** that would reduce total adaptation surface? For example: could an interface or adapter layer between fn.go and the KRO libraries absorb most modifications, leaving upstream code closer to untouched?
 - **Are we fighting upstream's design** in places where we should instead embrace it and adapt our wrapper layer?
 - **Are there upstream extension points** (interfaces, hooks, options patterns) that we're ignoring in favor of direct modification?
-- **Would a principal engineer redesign any of these adaptations?** If you had unlimited time to refactor (but still needed to vendor KRO), what would you change?
-- **Are there opportunities to contribute adapter interfaces upstream** that would make function-kro a thin wrapper instead of a fork?
 
 ### 3f. Local-Only Files
 
@@ -102,7 +127,6 @@ For files we've added (not in upstream):
 
 - **Do they follow upstream's coding patterns** (naming, error handling, package organization)?
 - **Are they well-scoped** or do they accumulate unrelated responsibilities?
-- **Could any of them be contributed upstream** as general-purpose utilities?
 - **Are they tested adequately?**
 
 ---
@@ -145,10 +169,15 @@ Present findings in this structure. Be direct — praise what's good, be specifi
 - Total lines changed: ~{estimate from diffs}
 - Upgrade difficulty estimate: {trivial / moderate / significant}
 
+### Changes to Revert (Not Functionally Required)
+
+{List every diff hunk that should be reverted to match upstream because it is not functionally required for compilation or correct behavior. For each, name the file, describe the change, and explain why it's not needed. If none found, state "None — all changes are functionally required."}
+
 ### File-by-File Findings
 
 #### {file path}
 - **Purpose of adaptation:** {one line}
+- **Functionally required:** {yes/no — if no, this should appear in "Changes to Revert" above}
 - **Minimality:** {assessment}
 - **Correctness:** {assessment}
 - **Upgrade cost:** {trivial / moderate / painful}
@@ -163,13 +192,10 @@ Present findings in this structure. Be direct — praise what's good, be specifi
 ### Principal-Level Recommendations
 
 #### Quick Wins
-{Changes that are small effort, high impact on quality or maintainability}
+{Changes that are small effort, high impact on quality or maintainability — focused on OUR code}
 
 #### Strategic Improvements
 {Larger refactors that would significantly reduce adaptation surface or improve quality}
-
-#### Upstream Contributions
-{Changes that could/should be proposed upstream to reduce our fork delta}
 
 ### Summary Table
 
@@ -191,6 +217,7 @@ rm -rf "/tmp/kro-review-$ARGUMENTS"
 ## Important Guidelines
 
 - **Do NOT make code changes.** This skill produces a review report only. The user decides what to act on.
+- **Only critique OUR changes.** Every finding must be about code we wrote, modified, or added — never about upstream code we left untouched. If you're about to flag something, ask: "Did we write/change this line?" If no, skip it.
 - **Be specific.** "This could be better" is useless. "Lines 45-52 of builder.go remove the REST mapper check, but the replacement doesn't handle the case where..." is useful.
 - **Cite line numbers and diff hunks.** Every finding should reference the specific code.
 - **Distinguish severity.** Not every finding needs immediate action. Use: `critical` (correctness risk), `important` (significant quality/maintenance concern), `suggestion` (would be nice), `nitpick` (style/preference).

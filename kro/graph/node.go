@@ -19,6 +19,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
 
@@ -54,6 +55,9 @@ const (
 	NodeTypeExternal
 	// NodeTypeInstance is the instance node (ID: "instance").
 	NodeTypeInstance
+	// NodeTypeExternalCollection is an external reference with a label selector
+	// that matches multiple resources (read-only collection, not applied).
+	NodeTypeExternalCollection
 )
 
 // String returns a human-readable string for the node type.
@@ -67,6 +71,8 @@ func (t NodeType) String() string {
 		return "External"
 	case NodeTypeInstance:
 		return "Instance"
+	case NodeTypeExternalCollection:
+		return "ExternalCollection"
 	default:
 		return "Unknown"
 	}
@@ -83,6 +89,7 @@ type NodeMeta struct {
 	Index int
 	// Type identifies the kind of node (Resource, Collection, External, Instance).
 	Type NodeType
+	// NOTE: GVR and Namespaced removed — Crossplane manages resource identity and namespace scoping.
 	// Dependencies lists the IDs of nodes this node depends on.
 	Dependencies []string
 }
@@ -91,8 +98,8 @@ type NodeMeta struct {
 type ForEachDimension struct {
 	// Name is the iterator variable name (e.g., "region")
 	Name string
-	// Expression is the CEL expression that returns a list (e.g., "schema.spec.regions")
-	Expression string
+	// Expression is the compiled CEL expression that returns a list (e.g., "schema.spec.regions")
+	Expression *krocel.Expression
 }
 
 // Node is the immutable node spec produced by the builder.
@@ -110,13 +117,13 @@ type Node struct {
 	// Variables holds the CEL expression fields found in the template.
 	Variables []*variable.ResourceField
 
-	// IncludeWhen are CEL expressions that must all evaluate to true
+	// IncludeWhen are compiled CEL expressions that must all evaluate to true
 	// for this resource to be included. Empty means always include.
-	IncludeWhen []string
+	IncludeWhen []*krocel.Expression
 
-	// ReadyWhen are CEL expressions that must all evaluate to true
+	// ReadyWhen are compiled CEL expressions that must all evaluate to true
 	// for this resource to be considered ready.
-	ReadyWhen []string
+	ReadyWhen []*krocel.Expression
 
 	// ForEach holds the forEach dimensions for collection resources.
 	// nil or empty means this is not a collection.
@@ -150,8 +157,8 @@ func (n *Node) DeepCopy() *Node {
 		cp.Variables = make([]*variable.ResourceField, len(n.Variables))
 		for i, v := range n.Variables {
 			copyVar := *v
-			copyVar.Expressions = slices.Clone(v.Expressions)
-			copyVar.Dependencies = slices.Clone(v.Dependencies)
+			exprCopy := *v.Expression
+			copyVar.Expression = &exprCopy
 			cp.Variables[i] = &copyVar
 		}
 	}

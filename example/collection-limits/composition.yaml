@@ -1,0 +1,52 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: networkingstack-collection-limits
+spec:
+  compositeTypeRef:
+    apiVersion: collectionlimits.example.crossplane.io/v1
+    kind: NetworkingStack
+  mode: Pipeline
+  pipeline:
+  - step: kro-run
+    functionRef:
+      name: function-kro
+    input:
+      apiVersion: kro.fn.crossplane.io/v1beta1
+      kind: ResourceGraph
+      status:
+        networkingInfo:
+          vpcID: ${vpc.status.atProvider.id}
+          subnetIDs: ${subnets.map(s, s.status.atProvider.id)}
+      resources:
+      - id: vpc
+        template:
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
+          kind: VPC
+          metadata: {}
+          spec:
+            forProvider:
+              region: ${schema.spec.region}
+              cidrBlock: 192.168.0.0/16
+              enableDnsHostnames: false
+              enableDnsSupport: true
+      # Subnets are created dynamically via forEach. The function is configured
+      # with --rgd-max-collection-size=5, so expanding beyond 5 subnets will
+      # produce a fatal error.
+      - id: subnets
+        forEach:
+          - az: ${schema.spec.availabilityZones}
+        template:
+          apiVersion: ec2.aws.m.upbound.io/v1beta1
+          kind: Subnet
+          metadata:
+            name: ${schema.metadata.name + "-subnet-" + az.suffix}
+          spec:
+            forProvider:
+              region: ${schema.spec.region}
+              availabilityZone: ${schema.spec.region + az.suffix}
+              cidrBlock: ${az.cidrBlock}
+              vpcId: ${vpc.status.atProvider.id}
+  - step: auto-ready
+    functionRef:
+      name: function-auto-ready

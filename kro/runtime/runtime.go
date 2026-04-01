@@ -15,8 +15,11 @@
 package runtime
 
 import (
+	"time"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/graph"
 	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
@@ -37,28 +40,37 @@ type Interface interface {
 // It holds nodes in topological order and provides access to the instance node.
 // Expression deduplication is done during FromGraph construction via a local cache.
 type Runtime struct {
-	order    []string
-	nodes    map[string]*Node
-	instance *Node
+	order     []string
+	nodes     map[string]*Node
+	instance  *Node
+	rgdConfig graph.RGDConfig
 }
 
 // FromGraph creates a new Runtime from a Graph and instance.
 // This is called at the start of each reconciliation.
-func FromGraph(g *graph.Graph, instance *unstructured.Unstructured) (*Runtime, error) {
+func FromGraph(g *graph.Graph, instance *unstructured.Unstructured, rgdConfig graph.RGDConfig) (*Runtime, error) {
+	startTime := time.Now()
+	defer func() {
+		duration := time.Since(startTime)
+		runtimeCreationDuration.Observe(duration.Seconds())
+		runtimeCreationTotal.Inc()
+	}()
 	instanceObj := instance.DeepCopy()
 
 	rt := &Runtime{
-		order: g.TopologicalOrder,
-		nodes: make(map[string]*Node),
+		order:     g.TopologicalOrder,
+		nodes:     make(map[string]*Node),
+		rgdConfig: rgdConfig,
 	}
 
 	// Expression cache for non-iteration expressions only.
 	// Iteration expressions are not cached because they're evaluated per-item
-	// with different iterator bindings each time.
+	// with different iterator bindings each time. Cache key is the original string.
 	expressionsCache := make(map[string]*expressionEvaluationState)
 
 	// Helper to get or create expression state. Only caches non-iteration expressions.
-	getOrCreateExpr := func(expr string, kind variable.ResourceVariableKind, deps []string) *expressionEvaluationState {
+	// The Expression contains the pre-compiled Program from build time.
+	getOrCreateExpr := func(expr *krocel.Expression, kind variable.ResourceVariableKind, deps []string) *expressionEvaluationState {
 		// Don't cache iteration expressions - they need fresh evaluation per iteration.
 		if kind.IsIteration() {
 			return &expressionEvaluationState{
@@ -67,7 +79,7 @@ func FromGraph(g *graph.Graph, instance *unstructured.Unstructured) (*Runtime, e
 				Kind:         kind,
 			}
 		}
-		if cached, ok := expressionsCache[expr]; ok {
+		if cached, ok := expressionsCache[expr.Original]; ok {
 			return cached
 		}
 		state := &expressionEvaluationState{
@@ -75,22 +87,26 @@ func FromGraph(g *graph.Graph, instance *unstructured.Unstructured) (*Runtime, e
 			Dependencies: deps,
 			Kind:         kind,
 		}
-		expressionsCache[expr] = state
+		expressionsCache[expr.Original] = state
 		return state
 	}
 
 	// Phase 1: Create all nodes first (without deps wired).
 	for _, id := range rt.order {
 		rt.nodes[id] = &Node{
-			Spec: g.Nodes[id].DeepCopy(),
-			deps: make(map[string]*Node),
+			Spec:           g.Nodes[id].DeepCopy(),
+			deps:           make(map[string]*Node),
+			rgdConfig:      rgdConfig,
+			resourceSchema: g.ResourceSchemas[id],
 		}
 	}
 
 	// Create instance node.
 	instNode := &Node{
-		Spec: g.Instance.DeepCopy(),
-		deps: make(map[string]*Node),
+		Spec:           g.Instance.DeepCopy(),
+		deps:           make(map[string]*Node),
+		rgdConfig:      rgdConfig,
+		resourceSchema: g.ResourceSchemas[graph.InstanceNodeID],
 	}
 	instNode.SetObserved([]*unstructured.Unstructured{instanceObj})
 	rt.instance = instNode
@@ -119,7 +135,7 @@ func FromGraph(g *graph.Graph, instance *unstructured.Unstructured) (*Runtime, e
 		node := rt.nodes[id]
 
 		for _, expr := range node.Spec.IncludeWhen {
-			state := getOrCreateExpr(expr, variable.ResourceVariableKindIncludeWhen, nil)
+			state := getOrCreateExpr(expr, variable.ResourceVariableKindIncludeWhen, expr.References)
 			node.includeWhenExprs = append(node.includeWhenExprs, state)
 		}
 
@@ -135,20 +151,16 @@ func FromGraph(g *graph.Graph, instance *unstructured.Unstructured) (*Runtime, e
 
 		for _, v := range node.Spec.Variables {
 			node.templateVars = append(node.templateVars, v)
-			for _, expr := range v.Expressions {
-				state := getOrCreateExpr(expr, v.Kind, v.Dependencies)
-				node.templateExprs = append(node.templateExprs, state)
-			}
+			state := getOrCreateExpr(v.Expression, v.Kind, v.Expression.References)
+			node.templateExprs = append(node.templateExprs, state)
 		}
 	}
 
 	// Instance status variables (if any) use the same cache.
 	for _, v := range instNode.Spec.Variables {
 		instNode.templateVars = append(instNode.templateVars, v)
-		for _, expr := range v.Expressions {
-			state := getOrCreateExpr(expr, v.Kind, v.Dependencies)
-			instNode.templateExprs = append(instNode.templateExprs, state)
-		}
+		state := getOrCreateExpr(v.Expression, v.Kind, v.Expression.References)
+		instNode.templateExprs = append(instNode.templateExprs, state)
 	}
 
 	return rt, nil

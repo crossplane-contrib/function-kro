@@ -23,6 +23,10 @@ spec:
           region: ${platformConfig.data.region}
           environment: ${platformConfig.data.environment}
           vpcCidr: ${platformConfig.data.vpcCidr}
+        notifications:
+          subscriberCount: ${string(size(subscribers))}
+          teams: ${subscribers.map(s, s.data.team).sort().join(", ")}
+          hasOncall: ${subscribers.exists(s, s.data.oncall == "true")}
       resources:
       # External reference to an existing ConfigMap containing platform configuration.
       # This ConfigMap is NOT created by function-kro - it must already exist.
@@ -33,6 +37,22 @@ spec:
           kind: ConfigMap
           metadata:
             name: ${schema.spec.configMapName}
+      # External collection reference: select ALL ConfigMaps with the given label.
+      # Unlike the single externalRef above (which fetches one resource by name),
+      # this uses a label selector to match multiple resources. The matched
+      # resources are exposed as a CEL list variable (subscribers[0], subscribers[1], ...).
+      # Use CEL list functions like size(), map(), filter(), exists() to work with them.
+      #
+      # Note the CEL expression in the label value — the selector dynamically
+      # matches ConfigMaps for this specific XR instance by name.
+      - id: subscribers
+        externalRef:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            selector:
+              matchLabels:
+                notification-channel: ${schema.metadata.name}
       # VPC using region from the external ConfigMap
       - id: vpc
         template:

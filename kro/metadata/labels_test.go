@@ -237,6 +237,15 @@ func TestNewResourceGraphDefinitionLabeler(t *testing.T) {
 	})
 }
 
+func TestNewGraphRevisionHashLabeler(t *testing.T) {
+	t.Run("sets hash label directly", func(t *testing.T) {
+		labeler := NewGraphRevisionHashLabeler("hash-1")
+		assert.Equal(t, GenericLabeler{
+			GraphRevisionHashLabel: "hash-1",
+		}, labeler)
+	})
+}
+
 func TestNewInstanceLabeler(t *testing.T) {
 	t.Run("NewInstanceLabeler", func(t *testing.T) {
 		name := "instance-name"
@@ -256,7 +265,7 @@ func TestNewInstanceLabeler(t *testing.T) {
 			Kind:    kind,
 		})
 
-		labeler := NewInstanceLabeler(obj)
+		labeler := NewInstanceLabeler(obj, true)
 		assert.Equal(t, GenericLabeler{
 			InstanceLabel:          name,
 			InstanceNamespaceLabel: namespace,
@@ -266,14 +275,48 @@ func TestNewInstanceLabeler(t *testing.T) {
 			InstanceKindLabel:      kind,
 		}, labeler)
 	})
+
+	t.Run("NewInstanceLabeler_ClusterScoped", func(t *testing.T) {
+		name := "instance-name"
+		uid := types.UID("instance-uid")
+		group := "apps.example.com"
+		version := "v1"
+		kind := "MyApp"
+
+		obj := &unstructured.Unstructured{}
+		obj.SetName(name)
+		obj.SetUID(uid)
+		obj.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   group,
+			Version: version,
+			Kind:    kind,
+		})
+
+		labeler := NewInstanceLabeler(obj, false)
+		assert.Equal(t, GenericLabeler{
+			InstanceLabel:        name,
+			InstanceIDLabel:      string(uid),
+			InstanceGroupLabel:   group,
+			InstanceVersionLabel: version,
+			InstanceKindLabel:    kind,
+		}, labeler)
+	})
 }
 
 func TestNewKROMetaLabeler(t *testing.T) {
 	t.Run("NewKROMetaLabeler", func(t *testing.T) {
 		labeler := NewKROMetaLabeler()
 		assert.Equal(t, GenericLabeler{
-			OwnedLabel:        "true",
-			KROVersionLabel:   version.GetVersionInfo().GitVersion,
+			OwnedLabel:      "true",
+			KROVersionLabel: version.GetVersionInfo().GitVersion,
+		}, labeler)
+	})
+}
+
+func TestNewNodeLabeler(t *testing.T) {
+	t.Run("NewNodeLabeler", func(t *testing.T) {
+		labeler := NewNodeLabeler()
+		assert.Equal(t, GenericLabeler{
 			ManagedByLabelKey: ManagedByKROValue,
 		}, labeler)
 	})

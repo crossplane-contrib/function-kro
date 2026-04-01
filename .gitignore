@@ -23,6 +23,7 @@ go.work
 # Claude Code - ignore user-specific files, commit shared skills/commands
 /.claude/settings.local.json
 /.claude/memory/
+/docs/plans/
 
 # Demo files
 aws-credentials.txt

@@ -16,48 +16,18 @@ package runtime
 
 import (
 	"fmt"
-	"slices"
 
-	"github.com/google/cel-go/cel"
-
-	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
 
-// buildEnv creates a CEL environment for the given variable names.
-func buildEnv(resourceIDs, listIDs []string) (*cel.Env, error) {
-	slices.Sort(resourceIDs)
-	slices.Sort(listIDs)
-
-	return krocel.DefaultEnvironment(
-		krocel.WithResourceIDs(resourceIDs),
-		krocel.WithListVariables(listIDs),
-	)
-}
-
-// evalExprAny evaluates an expression and caches the result.
-func evalExprAny(env *cel.Env, expr *expressionEvaluationState, ctx map[string]any) (any, error) {
-	if expr.Resolved {
-		return expr.ResolvedValue, nil
-	}
-
-	val, err := evalRawCEL(env, expr.Expression, ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	expr.Resolved = true
-	expr.ResolvedValue = val
-	return val, nil
+// evalExprAny evaluates an expression using its pre-compiled Program and caches the result.
+func evalExprAny(expr *expressionEvaluationState, ctx map[string]any) (any, error) {
+	return expr.EvalCached(ctx)
 }
 
 // evalBoolExpr evaluates an expression that should return bool.
-func evalBoolExpr(env *cel.Env, expr *expressionEvaluationState, ctx map[string]any) (bool, error) {
-	if expr.Resolved {
-		return expr.ResolvedValue.(bool), nil
-	}
-
-	val, err := evalRawCEL(env, expr.Expression, ctx)
+func evalBoolExpr(expr *expressionEvaluationState, ctx map[string]any) (bool, error) {
+	val, err := expr.EvalCached(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -66,57 +36,38 @@ func evalBoolExpr(env *cel.Env, expr *expressionEvaluationState, ctx map[string]
 	}
 	result, ok := val.(bool)
 	if !ok {
-		return false, fmt.Errorf("expression %q did not return bool", expr.Expression)
+		return false, fmt.Errorf("expression %q did not return bool", expr.Expression.UserExpression())
 	}
-
-	expr.Resolved = true
-	expr.ResolvedValue = result
 	return result, nil
 }
 
 // evalListExpr evaluates an expression that should return a list.
-func evalListExpr(env *cel.Env, expr *expressionEvaluationState, ctx map[string]any) ([]any, error) {
-	if expr.Resolved {
-		return expr.ResolvedValue.([]any), nil
-	}
-
-	val, err := evalRawCEL(env, expr.Expression, ctx)
+func evalListExpr(expr *expressionEvaluationState, ctx map[string]any) ([]any, error) {
+	val, err := expr.EvalCached(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if val == nil {
-		return nil, fmt.Errorf("expression %q returned null, expected list", expr.Expression)
+		return nil, fmt.Errorf("expression %q returned null, expected list", expr.Expression.UserExpression())
 	}
 	result, ok := val.([]any)
 	if !ok {
-		return nil, fmt.Errorf("expression %q did not return a list", expr.Expression)
+		return nil, fmt.Errorf("expression %q did not return a list", expr.Expression.UserExpression())
 	}
-
-	expr.Resolved = true
-	expr.ResolvedValue = result
 	return result, nil
 }
 
-// evalRawCEL evaluates a CEL expression string and returns the native Go value.
-// CEL errors are returned as-is; callers should use isCELDataPending() to check
-// if the error indicates data is pending and should be retried.
-func evalRawCEL(env *cel.Env, expr string, ctx map[string]any) (any, error) {
-	ast, issues := env.Compile(expr)
-	if issues != nil && issues.Err() != nil {
-		return nil, fmt.Errorf("compile error: %w", issues.Err())
+func filterContext(ctx map[string]any, refs []string) map[string]any {
+	if len(refs) == 0 {
+		return ctx
 	}
-
-	prg, err := env.Program(ast)
-	if err != nil {
-		return nil, fmt.Errorf("program error: %w", err)
+	filtered := make(map[string]any, len(refs))
+	for _, ref := range refs {
+		if v, ok := ctx[ref]; ok {
+			filtered[ref] = v
+		}
 	}
-
-	out, _, err := prg.Eval(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return krocel.GoNativeType(out)
+	return filtered
 }
 
 // toFieldDescriptors converts ResourceFields to FieldDescriptors for the resolver.
@@ -124,9 +75,8 @@ func toFieldDescriptors(vars []*variable.ResourceField) []variable.FieldDescript
 	result := make([]variable.FieldDescriptor, len(vars))
 	for i, v := range vars {
 		result[i] = variable.FieldDescriptor{
-			Path:                 v.Path,
-			Expressions:          v.Expressions,
-			StandaloneExpression: v.StandaloneExpression,
+			Path:       v.Path,
+			Expression: v.Expression,
 		}
 	}
 	return result

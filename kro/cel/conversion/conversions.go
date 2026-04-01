@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cel
+package conversion
 
 import (
 	"errors"
@@ -24,15 +24,19 @@ import (
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/common/types/traits"
+	"github.com/crossplane-contrib/function-kro/kro/cel/sentinels"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
-var (
-	// ErrUnsupportedType is returned when the type is not supported.
-	ErrUnsupportedType = errors.New("unsupported type")
-)
+// ErrUnsupportedType is returned when the type is not supported.
+var ErrUnsupportedType = errors.New("unsupported type")
 
 // GoNativeType transforms CEL output into corresponding Go types
 func GoNativeType(v ref.Val) (interface{}, error) {
+	if v == nil {
+		return nil, nil
+	}
 	switch v.Type() {
 	case types.BoolType:
 		return v.Value().(bool), nil
@@ -47,9 +51,9 @@ func GoNativeType(v ref.Val) (interface{}, error) {
 	case types.BytesType:
 		return v.Value().([]byte), nil
 	case types.DurationType:
-		return v.Value().(time.Duration), nil
+		return v1.Duration{Duration: v.Value().(time.Duration)}.ToUnstructured(), nil
 	case types.TimestampType:
-		return v.Value().(time.Time), nil
+		return v1.Time{Time: v.Value().(time.Time)}.ToUnstructured(), nil
 	case types.ListType:
 		return convertList(v)
 	case types.MapType:
@@ -60,9 +64,15 @@ func GoNativeType(v ref.Val) (interface{}, error) {
 			return nil, nil
 		}
 		return GoNativeType(opt.GetValue())
+	case types.UnknownType:
+		return v.Value(), nil
 	case types.NullType:
 		return nil, nil
 	default:
+		// Check if this is the omit sentinel before falling through to error.
+		if _, ok := v.Value().(sentinels.Omit); ok {
+			return sentinels.Omit{}, nil
+		}
 		// For types we can't convert, return as is with an error
 		return v.Value(), fmt.Errorf("%w: %v", ErrUnsupportedType, v.Type())
 	}
@@ -73,7 +83,7 @@ func convertList(v ref.Val) (interface{}, error) {
 	if !ok {
 		return v.ConvertToNative(reflect.TypeOf([]interface{}{}))
 	}
-	var result []interface{}
+	result := make([]interface{}, 0)
 	it := lister.Iterator()
 	for it.HasNext() == types.True {
 		elem := it.Next()
@@ -89,12 +99,25 @@ func convertList(v ref.Val) (interface{}, error) {
 func convertMap(v ref.Val) (interface{}, error) {
 	mapper, ok := v.(traits.Mapper)
 	if !ok {
-		return v.ConvertToNative(reflect.TypeOf(map[string]interface{}{}))
+		return v.ConvertToNative(reflect.TypeOf(map[string]any{}))
 	}
+
+	// Fast path: if the underlying value is already a raw Go map, return it
+	// directly. This matches ConvertToNative behavior and avoids having to iterate
+	// over already correctly present maps.
+	// Raw map values (from Kubernetes unstructured data) are already in the
+	// correct Go form, so no recursive conversion is needed.
+	if rawMap, ok := v.Value().(map[string]interface{}); ok {
+		return runtime.DeepCopyJSON(rawMap), nil
+	}
+
 	result := make(map[string]interface{})
 	it := mapper.Iterator()
 	for it.HasNext() == types.True {
 		key := it.Next()
+		if key == nil {
+			continue
+		}
 		val := mapper.Get(key)
 
 		keyNative, err := GoNativeType(key)

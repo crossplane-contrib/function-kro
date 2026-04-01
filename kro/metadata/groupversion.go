@@ -64,4 +64,3 @@ func ExtractGVKFromUnstructured(unstructured map[string]interface{}) (schema.Gro
 	}, nil
 }
 
-

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/graph"
 	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
@@ -100,7 +101,7 @@ func TestFromGraph(t *testing.T) {
 							{
 								Kind: variable.ResourceVariableKindStatic,
 								FieldDescriptor: variable.FieldDescriptor{
-									Expressions: []string{"schema.spec.name"},
+									Expression: krocel.NewUncompiled("schema.spec.name"),
 								},
 							},
 						},
@@ -111,7 +112,7 @@ func TestFromGraph(t *testing.T) {
 							{
 								Kind: variable.ResourceVariableKindStatic,
 								FieldDescriptor: variable.FieldDescriptor{
-									Expressions: []string{"schema.spec.name"},
+									Expression: krocel.NewUncompiled("schema.spec.name"),
 								},
 							},
 						},
@@ -129,13 +130,87 @@ func TestFromGraph(t *testing.T) {
 			},
 		},
 		{
+			name: "iteration expressions stay isolated while static expressions are shared",
+			graph: &graph.Graph{
+				TopologicalOrder: []string{"configs", "subnets", "deployment"},
+				Nodes: map[string]*graph.Node{
+					"configs": {
+						Meta: graph.NodeMeta{ID: "configs", Type: graph.NodeTypeCollection},
+						ForEach: []graph.ForEachDimension{
+							{Name: "region", Expression: krocel.NewUncompiled("schema.spec.regions")},
+						},
+						Variables: []*variable.ResourceField{
+							{
+								Kind: variable.ResourceVariableKindIteration,
+								FieldDescriptor: variable.FieldDescriptor{
+									Path:       "metadata.name",
+									Expression: krocel.NewUncompiled("region"),
+								},
+							},
+						},
+					},
+					"subnets": {
+						Meta: graph.NodeMeta{ID: "subnets", Type: graph.NodeTypeCollection},
+						ForEach: []graph.ForEachDimension{
+							{Name: "region", Expression: krocel.NewUncompiled("schema.spec.regions")},
+						},
+						Variables: []*variable.ResourceField{
+							{
+								Kind: variable.ResourceVariableKindIteration,
+								FieldDescriptor: variable.FieldDescriptor{
+									Path:       "metadata.name",
+									Expression: krocel.NewUncompiled("region"),
+								},
+							},
+						},
+					},
+					"deployment": {
+						Meta:        graph.NodeMeta{ID: "deployment", Type: graph.NodeTypeResource},
+						IncludeWhen: krocel.NewUncompiledSlice("schema.spec.enabled"),
+						ReadyWhen:   krocel.NewUncompiledSlice("deployment.status.ready"),
+						Variables: []*variable.ResourceField{
+							{
+								Kind: variable.ResourceVariableKindStatic,
+								FieldDescriptor: variable.FieldDescriptor{
+									Path:       "metadata.name",
+									Expression: krocel.NewUncompiled("schema.spec.name"),
+								},
+							},
+						},
+					},
+				},
+				Instance: &graph.Node{
+					Meta: graph.NodeMeta{ID: graph.InstanceNodeID, Type: graph.NodeTypeInstance},
+					Variables: []*variable.ResourceField{
+						{
+							Kind: variable.ResourceVariableKindStatic,
+							FieldDescriptor: variable.FieldDescriptor{
+								Path:       "status.name",
+								Expression: krocel.NewUncompiled("schema.spec.name"),
+							},
+						},
+					},
+				},
+			},
+			instance: testInstance("test"),
+			validate: func(t *testing.T, rt *Runtime) {
+				nodes := rt.Nodes()
+				require.Len(t, nodes, 3)
+				assert.NotSame(t, nodes[0].forEachExprs[0], nodes[1].forEachExprs[0])
+				assert.NotSame(t, nodes[0].templateExprs[0], nodes[1].templateExprs[0])
+				assert.Same(t, nodes[2].templateExprs[0], rt.Instance().templateExprs[0])
+				assert.Len(t, nodes[2].includeWhenExprs, 1)
+				assert.Len(t, nodes[2].readyWhenExprs, 1)
+			},
+		},
+		{
 			name: "original graph not mutated",
 			graph: &graph.Graph{
 				TopologicalOrder: []string{"node"},
 				Nodes: map[string]*graph.Node{
 					"node": {
 						Meta:        graph.NodeMeta{ID: "node", Type: graph.NodeTypeResource, Dependencies: []string{"dep1"}},
-						IncludeWhen: []string{"schema.spec.enabled"},
+						IncludeWhen: krocel.NewUncompiledSlice("schema.spec.enabled"),
 					},
 				},
 				Instance: &graph.Node{Meta: graph.NodeMeta{ID: graph.InstanceNodeID, Type: graph.NodeTypeInstance}},
@@ -145,7 +220,7 @@ func TestFromGraph(t *testing.T) {
 				// Mutate runtime node
 				nodes := rt.Nodes()
 				nodes[0].Spec.Meta.Dependencies = append(nodes[0].Spec.Meta.Dependencies, "new")
-				nodes[0].Spec.IncludeWhen = append(nodes[0].Spec.IncludeWhen, "new")
+				nodes[0].Spec.IncludeWhen = append(nodes[0].Spec.IncludeWhen, krocel.NewUncompiled("new"))
 			},
 		},
 	}
@@ -153,13 +228,14 @@ func TestFromGraph(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Capture original state for mutation test
-			var origDeps, origInclude []string
+			var origDeps []string
+			var origIncludeLen int
 			if node, ok := tt.graph.Nodes["node"]; ok {
 				origDeps = append([]string{}, node.Meta.Dependencies...)
-				origInclude = append([]string{}, node.IncludeWhen...)
+				origIncludeLen = len(node.IncludeWhen)
 			}
 
-			rt, err := FromGraph(tt.graph, tt.instance)
+			rt, err := FromGraph(tt.graph, tt.instance, graph.RGDConfig{MaxCollectionSize: 1000})
 			require.NoError(t, err)
 
 			tt.validate(t, rt)
@@ -167,7 +243,7 @@ func TestFromGraph(t *testing.T) {
 			// Verify original graph unchanged (for mutation test)
 			if node, ok := tt.graph.Nodes["node"]; ok {
 				assert.Equal(t, origDeps, node.Meta.Dependencies, "original graph was mutated")
-				assert.Equal(t, origInclude, node.IncludeWhen, "original graph was mutated")
+				assert.Equal(t, origIncludeLen, len(node.IncludeWhen), "original graph was mutated")
 			}
 		})
 	}
@@ -191,16 +267,15 @@ func TestFromGraph_InstanceWithDependencies(t *testing.T) {
 				{
 					Kind: variable.ResourceVariableKindDynamic,
 					FieldDescriptor: variable.FieldDescriptor{
-						Path:        "status.deploymentReady",
-						Expressions: []string{"deployment.status.ready"},
+						Path:       "status.deploymentReady",
+						Expression: krocel.NewUncompiled("deployment.status.ready"),
 					},
-					Dependencies: []string{"deployment"},
 				},
 			},
 		},
 	}
 
-	rt, err := FromGraph(g, testInstance("test"))
+	rt, err := FromGraph(g, testInstance("test"), graph.RGDConfig{MaxCollectionSize: 1000})
 	require.NoError(t, err)
 
 	inst := rt.Instance()

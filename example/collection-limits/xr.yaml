@@ -1,0 +1,13 @@
+apiVersion: collectionlimits.example.crossplane.io/v1
+kind: NetworkingStack
+metadata:
+  name: cool-network
+spec:
+  region: us-west-2
+  availabilityZones:
+    - suffix: a
+      cidrBlock: 192.168.0.0/18
+    - suffix: b
+      cidrBlock: 192.168.64.0/18
+    - suffix: c
+      cidrBlock: 192.168.128.0/18

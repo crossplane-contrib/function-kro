@@ -44,3 +44,13 @@ spec:
                     type: string
                   vpcCidr:
                     type: string
+              notifications:
+                type: object
+                description: Aggregated data from subscriber ConfigMaps selected by label
+                properties:
+                  subscriberCount:
+                    type: string
+                  teams:
+                    type: string
+                  hasOncall:
+                    type: boolean

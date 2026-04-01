@@ -1,0 +1,50 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: networkingstacks.collectionlimits.example.crossplane.io
+spec:
+  group: collectionlimits.example.crossplane.io
+  names:
+    kind: NetworkingStack
+    plural: networkingstacks
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              region:
+                type: string
+              availabilityZones:
+                type: array
+                description: List of availability zone suffixes (e.g., ["a", "b", "c"])
+                items:
+                  type: object
+                  properties:
+                    suffix:
+                      type: string
+                      description: AZ suffix (e.g., "a" for us-west-2a)
+                    cidrBlock:
+                      type: string
+                      description: CIDR block for this subnet (e.g., "192.168.0.0/18")
+                  required:
+                    - suffix
+                    - cidrBlock
+          status:
+            type: object
+            properties:
+              networkingInfo:
+                type: object
+                properties:
+                  vpcID:
+                    type: string
+                  subnetIDs:
+                    type: array
+                    items:
+                      type: string
