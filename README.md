@@ -110,6 +110,8 @@ See the [`example/`](example/) directory for complete working examples:
 | [readiness](example/readiness/) | Custom readiness conditions with `readyWhen` |
 | [externalref](example/externalref/) | Referencing existing cluster resources outside of the XR/composition |
 | [collections](example/collections/) | Dynamic resource expansion with `forEach` |
+| [omit](example/omit/) | Conditional field removal using the `omit()` CEL function |
+| [collection-limits](example/collection-limits/) | Enforcing maximum collection size limits |
 
 See the [examples README](example/README.md) for setup instructions and walkthroughs.
 
