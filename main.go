@@ -43,7 +43,7 @@ func (c *CLI) Run() error {
 		MaxCollectionDimensionSize: c.RGDMaxCollectionDimSize,
 	}
 
-	return function.Serve(&Function{log: log, rgdConfig: rgdConfig},
+	return function.Serve(NewFunction(log, rgdConfig),
 		function.Listen(c.Network, c.Address),
 		function.MTLSCertificates(c.TLSCertsDir),
 		function.Insecure(c.Insecure),

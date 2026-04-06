@@ -1596,13 +1596,10 @@ func TestRunFunction(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			f := &Function{
-				log: logging.NewNopLogger(),
-				rgdConfig: graph.RGDConfig{
+			f := NewFunction(logging.NewNopLogger(), graph.RGDConfig{
 					MaxCollectionSize:          1000,
 					MaxCollectionDimensionSize: 10,
-				},
-			}
+				})
 			rsp, err := f.RunFunction(tc.args.ctx, tc.args.req)
 
 			if diff := cmp.Diff(tc.want.rsp, rsp, protocmp.Transform()); diff != "" {
@@ -1617,13 +1614,10 @@ func TestRunFunction(t *testing.T) {
 }
 
 func TestRunFunctionCollectionSizeLimitExceeded(t *testing.T) {
-	f := &Function{
-		log: logging.NewNopLogger(),
-		rgdConfig: graph.RGDConfig{
-			MaxCollectionSize:          2,
-			MaxCollectionDimensionSize: 10,
-		},
-	}
+	f := NewFunction(logging.NewNopLogger(), graph.RGDConfig{
+		MaxCollectionSize:          2,
+		MaxCollectionDimensionSize: 10,
+	})
 
 	rsp, err := f.RunFunction(context.Background(), &fnv1.RunFunctionRequest{
 		Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
@@ -1706,13 +1700,10 @@ func TestRunFunctionOmitRemovesField(t *testing.T) {
 		_ = features.FeatureGate.Set("CELOmitFunction=false")
 	})
 
-	f := &Function{
-		log: logging.NewNopLogger(),
-		rgdConfig: graph.RGDConfig{
-			MaxCollectionSize:          1000,
-			MaxCollectionDimensionSize: 10,
-		},
-	}
+	f := NewFunction(logging.NewNopLogger(), graph.RGDConfig{
+		MaxCollectionSize:          1000,
+		MaxCollectionDimensionSize: 10,
+	})
 
 	rsp, err := f.RunFunction(context.Background(), &fnv1.RunFunctionRequest{
 		Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},

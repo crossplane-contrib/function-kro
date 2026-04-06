@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
-	"fmt"
 	"maps"
 	"strings"
 
@@ -43,6 +42,15 @@ type Function struct {
 
 	log       logging.Logger
 	rgdConfig graph.RGDConfig
+}
+
+// NewFunction returns a Function with the supplied configuration. A nil logger
+// defaults to a no-op logger.
+func NewFunction(log logging.Logger, rgdConfig graph.RGDConfig) *Function {
+	if log == nil {
+		log = logging.NewNopLogger()
+	}
+	return &Function{log: log, rgdConfig: rgdConfig}
 }
 
 // RunFunction runs the Function.
@@ -89,7 +97,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	// Request the schemas we need in the function response so Crossplane will
 	// send them to us as part of the next request. Do this on every function
 	// run so our requirements are stable.
-	f.requireSchemas(req, rsp, gvks)
+	requireSchemas(req, rsp, gvks)
 
 	// Build the schema resolver from the schemas that Crossplane has provided to us.
 	resolver, xrSchema, err := f.buildResolver(req, gvks, xrGVK)
@@ -174,7 +182,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	// Group observed composed resources by their runtime node ID.
-	observedByNodeID := f.groupObservedByNodeID(ocds, nodesByID)
+	observedByNodeID := groupObservedByNodeID(f.log, ocds, nodesByID)
 
 	// Set observed state on each node so the KRO runtime has access to all its
 	// observed fields/values to use when evaluating expressions.
@@ -307,7 +315,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	return rsp, nil
 }
 
-func (f *Function) requireSchemas(req *fnv1.RunFunctionRequest, rsp *fnv1.RunFunctionResponse, gvks []schema.GroupVersionKind) {
+func requireSchemas(req *fnv1.RunFunctionRequest, rsp *fnv1.RunFunctionResponse, gvks []schema.GroupVersionKind) {
 	// If Crossplane supports required_schemas (v2.2+), use those exclusively.
 	if request.HasCapability(req, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS) {
 		for _, gvk := range gvks {
@@ -488,7 +496,7 @@ func (f *Function) externalRefSelectorsFromRuntime(rt *runtime.Runtime, xrNamesp
 
 		if node.Spec.Meta.Type == graph.NodeTypeExternalCollection {
 			// attempt to build selectors for this external collection
-			selector, err := f.externalCollectionSelector(node)
+			selector, err := externalCollectionSelector(node)
 			if err != nil {
 				if runtime.IsDataPending(err) {
 					f.log.Debug("External collection not resolvable yet, skipping", "id", node.Spec.Meta.ID)
@@ -543,7 +551,7 @@ func (f *Function) externalRefSelectorsFromRuntime(rt *runtime.Runtime, xrNamesp
 
 // externalCollectionSelector resolves an external collection node's template and
 // extracts the label selector to build a Crossplane ResourceSelector with MatchLabels.
-func (f *Function) externalCollectionSelector(node *runtime.Node) (*fnv1.ResourceSelector, error) {
+func externalCollectionSelector(node *runtime.Node) (*fnv1.ResourceSelector, error) {
 	// compute/resolve all the expressions in this external collection's template
 	desired, err := node.GetDesired()
 	if err != nil {
@@ -597,7 +605,7 @@ func (f *Function) externalCollectionSelector(node *runtime.Node) (*fnv1.Resourc
 // For collections, the composed resource name uses the pattern
 // "collectionNodeID-metadataName" (e.g., "subnets-my-app-us-east-1") and has
 // the kro.run/collection-index label set.
-func (f *Function) groupObservedByNodeID(ocds map[resource.Name]resource.ObservedComposed, nodesByID map[string]*runtime.Node) map[string][]*unstructured.Unstructured {
+func groupObservedByNodeID(log logging.Logger, ocds map[resource.Name]resource.ObservedComposed, nodesByID map[string]*runtime.Node) map[string][]*unstructured.Unstructured {
 	observedByNodeID := make(map[string][]*unstructured.Unstructured)
 	for name, r := range ocds {
 		id := string(name) // ID is the same as the composed resource name
@@ -616,7 +624,7 @@ func (f *Function) groupObservedByNodeID(ocds map[resource.Name]resource.Observe
 		}
 		// This resource doesn't match any node - might be from a different function
 		// or a stale resource. Skip it.
-		f.log.Debug("Observed resource has no matching node", "name", name)
+		log.Debug("Observed resource has no matching node", "name", name)
 	}
 
 	return observedByNodeID
@@ -644,23 +652,23 @@ func findCollectionNodeID(id string, nodesByID map[string]*runtime.Node) string 
 	}
 }
 
-// StructToSpecSchema converts a protobuf Struct (as returned by Crossplane's
+// structToSpecSchema converts a protobuf Struct (as returned by Crossplane's
 // required_schemas) to a kube-openapi spec.Schema.
 func structToSpecSchema(s *structpb.Struct) (*spec.Schema, error) {
 	if s == nil {
-		return nil, fmt.Errorf("schema struct is nil")
+		return nil, errors.New("schema struct is nil")
 	}
 
 	// Convert protobuf Struct to JSON bytes
 	jsonBytes, err := protojson.Marshal(s)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
+		return nil, errors.Wrap(err, "cannot marshal struct to JSON")
 	}
 
 	// Unmarshal JSON into spec.Schema
 	schema := &spec.Schema{}
 	if err := json.Unmarshal(jsonBytes, schema); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON to spec.Schema: %w", err)
+		return nil, errors.Wrap(err, "cannot unmarshal JSON to spec.Schema")
 	}
 
 	return schema, nil
