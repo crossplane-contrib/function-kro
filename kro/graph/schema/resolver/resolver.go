@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"time"
 
+	"k8s.io/apiextensions-apiserver/pkg/generated/openapi"
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -49,7 +50,7 @@ func NewCombinedResolver(clientConfig *rest.Config, httpClient *http.Client) (re
 	// CoreResolver is a resolver that uses the OpenAPI definitions to resolve
 	// core types. It is used to resolve types that are known at compile time.
 	coreResolver := resolver.NewDefinitionsSchemaResolver(
-		mergedOpenAPIDefinitions,
+		openapi.GetOpenAPIDefinitions,
 		scheme.Scheme,
 	)
 
