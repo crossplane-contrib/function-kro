@@ -8,7 +8,7 @@ package resolver
 import (
 	"maps"
 
-	"github.com/crossplane-contrib/function-kro/kro/graph/schema/resolver/generated"
+	"github.com/crossplane-contrib/function-kro/schemas"
 	"k8s.io/apiextensions-apiserver/pkg/generated/openapi"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
@@ -62,22 +62,18 @@ func mergedOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.Op
 	// Start with apiextensions-apiserver definitions (meta/v1, CRD types, etc.)
 	merged := openapi.GetOpenAPIDefinitions(ref)
 	// Layer our generated definitions on top (core/v1, apps/v1, etc.)
-	maps.Copy(merged, generated.GetOpenAPIDefinitions(ref))
+	maps.Copy(merged, schemas.GetOpenAPIDefinitions(ref))
 
 	return merged
 }
 
 // combinedResolver tries resolvers in order until one returns a schema.
-// We need our own rather than using DefinitionsSchemaResolver.Combine() because
-// that method puts core types as primary. We need the opposite priority:
-// Crossplane-provided schemas first, core types as fallback.
 type combinedResolver struct {
 	primary  resolver.SchemaResolver
 	fallback resolver.SchemaResolver
 }
 
 func (c *combinedResolver) ResolveSchema(gvk schema.GroupVersionKind) (*spec.Schema, error) {
-	// Try primary resolver first
 	s, err := c.primary.ResolveSchema(gvk)
 	if err != nil {
 		return nil, err
@@ -85,6 +81,5 @@ func (c *combinedResolver) ResolveSchema(gvk schema.GroupVersionKind) (*spec.Sch
 	if s != nil {
 		return s, nil
 	}
-	// Fall back to secondary resolver
 	return c.fallback.ResolveSchema(gvk)
 }

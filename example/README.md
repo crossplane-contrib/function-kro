@@ -333,9 +333,12 @@ kubectl get vpc.ec2.aws.m.upbound.io -l crossplane.io/composite=cool-network -o 
 
 ```shell
 kubectl delete -f omit/xr.yaml
+kubectl get managed
+```
+
+```shell
 kubectl delete -f omit/composition.yaml
 kubectl delete -f omit/xrd.yaml
-kubectl get managed
 ```
 
 ## Core example
@@ -355,8 +358,7 @@ Create a `CoolSecret` instance:
 kubectl apply -f core/xr.yaml
 ```
 
-Watch the composed resources being created and observe how readiness propagates as each
-resource satisfies its `readyWhen` conditions:
+Watch the XR become ready when its composed resources satisfy their `readyWhen` conditions:
 ```shell
 crossplane beta trace -w coolsecret.core.example.crossplane.io/cool-secret
 ```
