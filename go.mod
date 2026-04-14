@@ -24,7 +24,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20260330154417-16be699c7b31
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
 	sigs.k8s.io/controller-runtime v0.23.3
-	sigs.k8s.io/controller-tools v0.20.0
+	sigs.k8s.io/controller-tools v0.20.1
 	sigs.k8s.io/release-utils v0.12.4
 )
 
