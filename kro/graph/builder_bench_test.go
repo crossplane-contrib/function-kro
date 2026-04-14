@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"testing"
 
-	krov1alpha1 "github.com/crossplane-contrib/function-kro/input/v1beta1"
+	krov1alpha1 "github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"github.com/crossplane-contrib/function-kro/kro/testutil/generator"
 	"github.com/crossplane-contrib/function-kro/kro/testutil/k8s"
 )

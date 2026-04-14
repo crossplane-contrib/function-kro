@@ -92,7 +92,7 @@ function-kro/
 ├── main.go                  # CLI entry point with gRPC server setup
 ├── spec-desired-ssa.md      # SSA design spec (historical — see note in Design Decisions)
 │
-├── input/v1beta1/           # Input API definitions (ResourceGraph, Resource types)
+├── input/v1alpha1/          # Input API definitions (ResourceGraph type)
 │
 ├── kro/                     # Core KRO implementation
 │   ├── cel/                 # CEL environment setup and expression evaluation
@@ -272,7 +272,7 @@ golangci-lint run
 
 ### Adding a New Resource Field
 
-1. Update `input/v1beta1/input.go` with new field
+1. Update `input/v1alpha1/input.go` with new field
 2. Run `go generate ./...` to regenerate code
 3. Update `kro/graph/builder.go` to handle new field
 4. Add validation in `kro/graph/validation.go`
@@ -321,7 +321,7 @@ ExternalRef resources reference existing cluster resources without creating them
 - Multi-phase: if a dependency isn't observed yet, the external ref is skipped and resolved on the next function invocation
 - External refs are excluded from desired composed resources (read-only semantics)
 
-Key files: `fn.go` (external ref processing), `input/v1beta1/input.go` (ExternalRef, ExternalRefMetadata types)
+Key files: `fn.go` (external ref processing), `input/v1alpha1/input.go` (ExternalRef, ExternalRefMetadata types)
 
 ## Key Dependencies
 

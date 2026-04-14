@@ -21,11 +21,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 
-	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	"github.com/kubernetes-sigs/kro/api/v1alpha1"
 )
 
 const (
-	KROInstancesGroupSuffix = v1beta1.KRODomainName
+	KROInstancesGroupSuffix = v1alpha1.KRODomainName
 )
 
 // ExtractGVKFromUnstructured extracts the GroupVersionKind from an unstructured object.

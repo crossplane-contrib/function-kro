@@ -25,7 +25,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+
+	input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
 	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/graph/variable"
 )
@@ -33,13 +35,13 @@ import (
 func TestValidateRGResourceNames(t *testing.T) {
 	tests := []struct {
 		name        string
-		rgd         *v1beta1.ResourceGraph
+		rgd         *input.ResourceGraph
 		expectError bool
 	}{
 		{
 			name: "Valid resource graph definition resource ids",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{ID: "validID1"},
 					{ID: "validID2"},
 				},
@@ -48,8 +50,8 @@ func TestValidateRGResourceNames(t *testing.T) {
 		},
 		{
 			name: "Duplicate resource ids",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{ID: "duplicateID"},
 					{ID: "duplicateID"},
 				},
@@ -58,8 +60,8 @@ func TestValidateRGResourceNames(t *testing.T) {
 		},
 		{
 			name: "Invalid resource ID",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{ID: "Invalid_ID"},
 				},
 			},
@@ -67,8 +69,8 @@ func TestValidateRGResourceNames(t *testing.T) {
 		},
 		{
 			name: "Reserved word as resource id",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{ID: "spec"},
 				},
 			},
@@ -265,13 +267,13 @@ func TestValidateResourceIDs(t *testing.T) {
 	}
 	tests := []struct {
 		name    string
-		rgd     *v1beta1.ResourceGraph
+		rgd     *input.ResourceGraph
 		wantErr bool
 	}{
 		{
 			name: "Valid resource IDs",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{ID: "validResourceID"},
 				},
 			},
@@ -279,8 +281,8 @@ func TestValidateResourceIDs(t *testing.T) {
 		},
 		{
 			name: "Invalid resource ID",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{ID: "invalid_ResourceID"},
 				},
 			},
@@ -288,11 +290,11 @@ func TestValidateResourceIDs(t *testing.T) {
 		},
 		{
 			name: "Invalid foreach iterator name",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "validResourceID",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"invalid_IteratorName": "b"},
 						},
 					},
@@ -379,18 +381,18 @@ func TestValidateForEachDimensions(t *testing.T) {
 	}
 	tests := []struct {
 		name        string
-		rgd         *v1beta1.ResourceGraph
+		rgd         *input.ResourceGraph
 		rgdConfig   RGDConfig
 		expectError bool
 		errorMsg    string
 	}{
 		{
 			name: "Valid forEach iterator",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "workers",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"name": "${schema.spec.workers}"},
 						},
 					},
@@ -401,11 +403,11 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Valid multiple forEach iterators",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "deployments",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"region": "${schema.spec.regions}"},
 							{"tier": "${schema.spec.tiers}"},
 						},
@@ -417,11 +419,11 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Invalid iterator name - not lowerCamelCase",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "workers",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"Invalid_Name": "${schema.spec.workers}"},
 						},
 					},
@@ -433,11 +435,11 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Iterator name is reserved keyword (schema)",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "workers",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"schema": "${schema.spec.workers}"},
 						},
 					},
@@ -449,11 +451,11 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Iterator name 'each' is reserved for per-item readiness",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "pods",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"each": "${schema.spec.podNames}"},
 						},
 					},
@@ -465,12 +467,12 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Iterator name conflicts with resource ID",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{ID: "database"},
 					{
 						ID: "backups",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"database": "${schema.spec.databases}"},
 						},
 					},
@@ -482,11 +484,11 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Duplicate iterator names in same resource",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "workers",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"name": "${schema.spec.workers}"},
 							{"name": "${schema.spec.otherWorkers}"},
 						},
@@ -499,17 +501,17 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Same iterator name in different resources is valid",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "workers",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"name": "${schema.spec.workers}"},
 						},
 					},
 					{
 						ID: "backups",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"name": "${schema.spec.databases}"},
 						},
 					},
@@ -520,8 +522,8 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Resource without forEach is valid",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{ID: "deployment"},
 				},
 			},
@@ -530,11 +532,11 @@ func TestValidateForEachDimensions(t *testing.T) {
 		},
 		{
 			name: "Resource with more than max forEach dimensions",
-			rgd: &v1beta1.ResourceGraph{
-				Resources: []*v1beta1.Resource{
+			rgd: &input.ResourceGraph{
+				Resources: []*v1alpha1.Resource{
 					{
 						ID: "deployment",
-						ForEach: []v1beta1.ForEachDimension{
+						ForEach: []v1alpha1.ForEachDimension{
 							{"a": "b"},
 						},
 					},
@@ -669,44 +671,44 @@ func TestValidateNoKROOwnedLabels(t *testing.T) {
 func TestValidateCombinableResourceFields(t *testing.T) {
 	tests := []struct {
 		name    string
-		res     *v1beta1.Resource
+		res     *v1alpha1.Resource
 		wantErr string
 	}{
 		{
 			name:    "missing both template and external ref",
-			res:     &v1beta1.Resource{ID: "res"},
+			res:     &v1alpha1.Resource{ID: "res"},
 			wantErr: "exactly one of template or externalRef must be provided",
 		},
 		{
 			name: "template and external ref together",
-			res: &v1beta1.Resource{
+			res: &v1alpha1.Resource{
 				ID:          "res",
 				Template:    runtime.RawExtension{Raw: []byte("kind: ConfigMap")},
-				ExternalRef: &v1beta1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
+				ExternalRef: &v1alpha1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
 			},
 			wantErr: "cannot use externalRef with template",
 		},
 		{
 			name: "external ref and foreach together",
-			res: &v1beta1.Resource{
+			res: &v1alpha1.Resource{
 				ID:          "res",
-				ExternalRef: &v1beta1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
-				ForEach:     []v1beta1.ForEachDimension{{"item": "${schema.spec.items}"}},
+				ExternalRef: &v1alpha1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
+				ForEach:     []v1alpha1.ForEachDimension{{"item": "${schema.spec.items}"}},
 			},
 			wantErr: "cannot use externalRef with forEach",
 		},
 		{
 			name: "template only is valid",
-			res: &v1beta1.Resource{
+			res: &v1alpha1.Resource{
 				ID:       "res",
 				Template: runtime.RawExtension{Raw: []byte("kind: ConfigMap")},
 			},
 		},
 		{
 			name: "external ref only is valid",
-			res: &v1beta1.Resource{
+			res: &v1alpha1.Resource{
 				ID:          "res",
-				ExternalRef: &v1beta1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
+				ExternalRef: &v1alpha1.ExternalRef{APIVersion: "v1", Kind: "ConfigMap"},
 			},
 		},
 	}
@@ -727,7 +729,7 @@ func TestValidateCombinableResourceFields(t *testing.T) {
 func TestValidateTemplateConstraints(t *testing.T) {
 	tests := []struct {
 		name               string
-		resource           *v1beta1.Resource
+		resource           *v1alpha1.Resource
 		object             map[string]interface{}
 		namespaced         bool
 		instanceNamespaced bool
@@ -735,7 +737,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 	}{
 		{
 			name: "invalid metadata namespace shape",
-			resource: &v1beta1.Resource{
+			resource: &v1alpha1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -746,7 +748,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "cluster scoped resource must not set namespace",
-			resource: &v1beta1.Resource{
+			resource: &v1alpha1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -759,7 +761,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "cluster-scoped instance requires explicit namespace on namespaced resource",
-			resource: &v1beta1.Resource{
+			resource: &v1alpha1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -771,7 +773,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "cluster-scoped instance rejects empty namespace on namespaced resource",
-			resource: &v1beta1.Resource{
+			resource: &v1alpha1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -785,7 +787,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "reserved kro label bubbles up",
-			resource: &v1beta1.Resource{
+			resource: &v1alpha1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -801,7 +803,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "valid namespaced object",
-			resource: &v1beta1.Resource{
+			resource: &v1alpha1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{
@@ -817,7 +819,7 @@ func TestValidateTemplateConstraints(t *testing.T) {
 		},
 		{
 			name: "cluster-scoped instance allows explicit namespace on namespaced resource",
-			resource: &v1beta1.Resource{
+			resource: &v1alpha1.Resource{
 				ID: "res",
 			},
 			object: map[string]interface{}{

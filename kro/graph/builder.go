@@ -28,7 +28,9 @@ import (
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+
+	input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
 	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/cel/ast"
 	"github.com/crossplane-contrib/function-kro/kro/cel/conversion"
@@ -84,7 +86,7 @@ type RGDConfig struct {
 // CRD. The ResourceGraphDefinition object is a fully processed and validated representation
 // of the resource graph definition CRD, it's underlying resources, and the relationships between
 // the resources.
-func (b *Builder) NewResourceGraphDefinition(rg *v1beta1.ResourceGraph, xrSchema *spec.Schema, rgdConfig RGDConfig) (*Graph, error) {
+func (b *Builder) NewResourceGraphDefinition(rg *input.ResourceGraph, xrSchema *spec.Schema, rgdConfig RGDConfig) (*Graph, error) {
 	// Before anything else, let's copy the resource graph to avoid modifying the
 	// original object.
 	rgd := rg.DeepCopy()
@@ -266,7 +268,7 @@ func (b *Builder) NewResourceGraphDefinition(rg *v1beta1.ResourceGraph, xrSchema
 // The selector (if any) is embedded directly in the template so that ParseSchemalessResource
 // can extract CEL expressions from the entire resource in a single pass.
 func (b *Builder) buildExternalRefResource(
-	externalRef *v1beta1.ExternalRef) (map[string]interface{}, error) {
+	externalRef *v1alpha1.ExternalRef) (map[string]interface{}, error) {
 	result, err := runtime.DefaultUnstructuredConverter.ToUnstructured(externalRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert ExternalRef to unstructured: %w", err)
@@ -281,7 +283,7 @@ func (b *Builder) buildExternalRefResource(
 // Returns the Node and the OpenAPI schema (schema is only needed during build for CEL validation).
 func (b *Builder) buildRGResource(
 	p *parser.Parser,
-	rgResource *v1beta1.Resource,
+	rgResource *v1alpha1.Resource,
 	order int,
 ) (*Node, *spec.Schema, error) {
 	// 1. Validate resource field combinations.
@@ -567,7 +569,7 @@ func extractForEachDependencies(
 // them, compile them, and build the instance node.
 func buildInstanceNodeFromSchema(
 	bc *buildContext,
-	rgd *v1beta1.ResourceGraph,
+	rgd *input.ResourceGraph,
 	nodeNames []string,
 	inspector *ast.Inspector,
 ) (*Node, error) {
@@ -790,7 +792,7 @@ func validateConditionReferences(expressions []*krocel.Expression, allowedIdenti
 // parseForEachDimensions converts API forEach dimensions (map[string]string) to
 // ForEachDimension structs. Each API dimension is a single-entry map where
 // the key is the variable name and the value is the CEL expression.
-func parseForEachDimensions(apiDimensions []v1beta1.ForEachDimension) ([]ForEachDimension, error) {
+func parseForEachDimensions(apiDimensions []v1alpha1.ForEachDimension) ([]ForEachDimension, error) {
 	if len(apiDimensions) == 0 {
 		return nil, nil
 	}

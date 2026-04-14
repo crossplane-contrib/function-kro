@@ -51,8 +51,8 @@ UPSTREAM_REPO="https://github.com/kubernetes-sigs/kro.git"
 LOCAL_IMPORT_PREFIX="github.com/crossplane-contrib/function-kro/kro"
 UPSTREAM_IMPORT_PREFIX="sigs.k8s.io/kro/pkg"
 
-# Input type import path mappings (we use input/v1beta1, upstream uses api/v1alpha1)
-LOCAL_INPUT_PREFIX="github.com/crossplane-contrib/function-kro/input/v1beta1"
+# Input type import path mappings (we use input/v1alpha1, upstream uses api/v1alpha1)
+LOCAL_INPUT_PREFIX="github.com/crossplane-contrib/function-kro/input/v1alpha1"
 UPSTREAM_INPUT_PREFIX="sigs.k8s.io/kro/api/v1alpha1"
 
 # Upstream packages we vendor (only show upstream-only files from these)
@@ -178,12 +178,11 @@ normalize_imports() {
     if [[ "$NORMALIZE_IMPORTS" == "true" ]]; then
         # Normalize all known import paths to a canonical form for comparison
         # This handles: our local imports, old upstream path, current upstream path,
-        # and input type imports (our input/v1beta1 vs upstream api/v1alpha1)
+        # and input type imports (our input/v1alpha1 vs upstream api/v1alpha1)
         sed -e "s|$LOCAL_IMPORT_PREFIX|$UPSTREAM_IMPORT_PREFIX|g" \
             -e "s|$LOCAL_INPUT_PREFIX|$UPSTREAM_INPUT_PREFIX|g" \
             -e "s|github.com/kro-run/kro/pkg|$UPSTREAM_IMPORT_PREFIX|g" \
             -e "s|github.com/kubernetes-sigs/kro/pkg|$UPSTREAM_IMPORT_PREFIX|g" \
-            -e "s|v1beta1\\.KRODomainName|v1alpha1.KRODomainName|g" \
             "$file"
     else
         cat "$file"

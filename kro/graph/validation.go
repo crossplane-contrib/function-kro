@@ -22,7 +22,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+
+	input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
 	"github.com/crossplane-contrib/function-kro/kro/cel/ast"
 	"github.com/crossplane-contrib/function-kro/kro/metadata"
 )
@@ -109,7 +111,7 @@ func isKROReservedWord(word string) bool {
 // validateResourceIDs validates the naming conventions of the resource IDs
 // and the forEach constraints defined in rgdConfig.
 // In function-kro, we skip Kind validation since Crossplane manages the XR CRD.
-func validateResourceIDs(rgd *v1beta1.ResourceGraph, rgdConfig RGDConfig) error {
+func validateResourceIDs(rgd *input.ResourceGraph, rgdConfig RGDConfig) error {
 	seen := make(map[string]struct{})
 	for _, res := range rgd.Resources {
 		if isKROReservedWord(res.ID) {
@@ -146,7 +148,7 @@ func validateResourceIDs(rgd *v1beta1.ResourceGraph, rgdConfig RGDConfig) error 
 // - Iterator names are not reserved keywords
 // - Iterator names do not conflict with resource IDs
 // - Iterator names are unique within the same resource
-func validateForEachDimensions(res *v1beta1.Resource, resourceIDs sets.String, rgdConfig RGDConfig) error {
+func validateForEachDimensions(res *v1alpha1.Resource, resourceIDs sets.String, rgdConfig RGDConfig) error {
 	if len(res.ForEach) > rgdConfig.MaxCollectionDimensionSize {
 		return fmt.Errorf("resource %q: forEach cannot have more "+
 			"than %d dimensions, got %d", res.ID, rgdConfig.MaxCollectionDimensionSize, len(res.ForEach))
@@ -232,7 +234,7 @@ func validateKubernetesVersion(version string) error {
 
 // validateCombinableResourceFields checks that certain fields in a resource
 // are not used together in an invalid combination, and that required fields are present.
-func validateCombinableResourceFields(res *v1beta1.Resource) error {
+func validateCombinableResourceFields(res *v1alpha1.Resource) error {
 	hasTemplate := len(res.Template.Raw) > 0 // Template is runtime.RawExtension (struct)
 	hasExternalRef := res.ExternalRef != nil // ExternalRef is a pointer
 
@@ -251,7 +253,7 @@ func validateCombinableResourceFields(res *v1beta1.Resource) error {
 // validateTemplateConstraints enforces template-level constraints before parsing expressions.
 // Keep this small and focused on invariants that must hold regardless of CEL.
 func validateTemplateConstraints(
-	rgResource *v1beta1.Resource,
+	rgResource *v1alpha1.Resource,
 	resourceObject map[string]interface{},
 	resourceNamespaced bool,
 	instanceNamespaced bool,

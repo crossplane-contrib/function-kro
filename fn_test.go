@@ -8,7 +8,6 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"k8s.io/utils/ptr"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 
@@ -88,7 +87,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test"},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -145,7 +144,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{}}, // an older crossplane version won't advertise capabilities at all
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -323,7 +322,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -437,7 +436,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -546,7 +545,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "config",
@@ -629,7 +628,7 @@ func TestRunFunction(t *testing.T) {
 								ApiVersion: "v1",
 								Kind:       "ConfigMap",
 								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "platform-config"},
-								Namespace:  ptr.To("xr-ns"),
+								Namespace:  new("xr-ns"),
 							},
 						},
 					},
@@ -667,7 +666,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "config",
@@ -754,7 +753,7 @@ func TestRunFunction(t *testing.T) {
 								ApiVersion: "v1",
 								Kind:       "ConfigMap",
 								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "my-platform-config"},
-								Namespace:  ptr.To("xr-ns"),
+								Namespace:  new("xr-ns"),
 							},
 						},
 					},
@@ -793,7 +792,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "configs",
@@ -934,7 +933,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -1038,7 +1037,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -1143,7 +1142,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -1241,7 +1240,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -1342,7 +1341,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -1472,7 +1471,7 @@ func TestRunFunction(t *testing.T) {
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 					Input: resource.MustStructJSON(`{
-						"apiVersion": "kro.fn.crossplane.io/v1beta1",
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
 						"resources": [{
 							"id": "bucket",
@@ -1622,7 +1621,7 @@ func TestRunFunctionCollectionSizeLimitExceeded(t *testing.T) {
 	rsp, err := f.RunFunction(context.Background(), &fnv1.RunFunctionRequest{
 		Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 		Input: resource.MustStructJSON(`{
-			"apiVersion": "kro.fn.crossplane.io/v1beta1",
+			"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 			"kind": "ResourceGraph",
 			"resources": [{
 				"id": "bucket",
@@ -1708,7 +1707,7 @@ func TestRunFunctionOmitRemovesField(t *testing.T) {
 	rsp, err := f.RunFunction(context.Background(), &fnv1.RunFunctionRequest{
 		Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
 		Input: resource.MustStructJSON(`{
-			"apiVersion": "kro.fn.crossplane.io/v1beta1",
+			"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 			"kind": "ResourceGraph",
 			"resources": [{
 				"id": "bucket",

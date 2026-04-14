@@ -26,7 +26,7 @@ import (
 	apiservercel "k8s.io/apiserver/pkg/cel"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	krov1alpha1 "github.com/crossplane-contrib/function-kro/input/v1beta1"
+	krov1alpha1 "github.com/kubernetes-sigs/kro/api/v1alpha1"
 	krocel "github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/cel/ast"
 

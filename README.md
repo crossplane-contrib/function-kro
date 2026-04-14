@@ -40,7 +40,7 @@ spec:
     functionRef:
       name: function-kro
     input:
-      apiVersion: kro.fn.crossplane.io/v1beta1
+      apiVersion: kro.fn.crossplane.io/v1alpha1
       kind: ResourceGraph
       status:
         vpcId: ${vpc.status.atProvider.id}

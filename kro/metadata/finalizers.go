@@ -19,10 +19,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	"github.com/kubernetes-sigs/kro/api/v1alpha1"
 )
 
-const kroFinalizer = v1beta1.KRODomainName + "/finalizer"
+const kroFinalizer = v1alpha1.KRODomainName + "/finalizer"
 
 // SetResourceGraphDefinitionFinalizer adds the kro finalizer to the object if it's not already present.
 func SetResourceGraphDefinitionFinalizer(obj metav1.Object) {

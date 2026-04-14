@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -29,7 +30,7 @@ import (
 	"github.com/crossplane/function-sdk-go/resource/composite"
 	"github.com/crossplane/function-sdk-go/response"
 
-	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
 	"github.com/crossplane-contrib/function-kro/kro/graph"
 	schemaresolver "github.com/crossplane-contrib/function-kro/kro/graph/schema/resolver"
 	"github.com/crossplane-contrib/function-kro/kro/metadata"
@@ -59,7 +60,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	rsp := response.To(req, response.DefaultTTL)
 
 	// Get the input resource graph
-	rg := &v1beta1.ResourceGraph{}
+	rg := &input.ResourceGraph{}
 	if err := request.GetInput(req, rg); err != nil {
 		response.Fatal(rsp, errors.Wrapf(err, "cannot get Function input from %T", req))
 		return rsp, nil
@@ -211,7 +212,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 }
 
 // collectGVKs returns the GVKs for the XR and every resource in the graph.
-func collectGVKs(xrGVK schema.GroupVersionKind, resources []*v1beta1.Resource) ([]schema.GroupVersionKind, error) {
+func collectGVKs(xrGVK schema.GroupVersionKind, resources []*v1alpha1.Resource) ([]schema.GroupVersionKind, error) {
 	gvks := make([]schema.GroupVersionKind, 0, len(resources)+1)
 	gvks = append(gvks, xrGVK)
 	for _, r := range resources {

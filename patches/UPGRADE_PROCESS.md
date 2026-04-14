@@ -236,17 +236,19 @@ find kro/ -name "*.go" -exec sed -i '' \
 find kro/ -name "*.go" -exec sed -i '' \
     's|sigs.k8s.io/kro/pkg/|github.com/crossplane-contrib/function-kro/kro/|g' {} \;
 
-# Also update any api/ imports if present
-# IMPORTANT: This also handles the v1alpha1 → v1beta1 version change
-find kro/ -name "*.go" -exec sed -i '' \
-    's|github.com/kubernetes-sigs/kro/api/v1alpha1|github.com/crossplane-contrib/function-kro/input/v1beta1|g' {} \;
-find kro/ -name "*.go" -exec sed -i '' \
-    's|sigs.k8s.io/kro/api/v1alpha1|github.com/crossplane-contrib/function-kro/input/v1beta1|g' {} \;
-# Handle any other api/ subpaths that aren't version-specific
-find kro/ -name "*.go" -exec sed -i '' \
-    's|github.com/kubernetes-sigs/kro/api/|github.com/crossplane-contrib/function-kro/input/|g' {} \;
-find kro/ -name "*.go" -exec sed -i '' \
-    's|sigs.k8s.io/kro/api/|github.com/crossplane-contrib/function-kro/input/|g' {} \;
+# IMPORTANT: Do NOT replace api/v1alpha1 imports with input/v1alpha1.
+# Types like Resource, ExternalRef, ForEachDimension, and KRODomainName are
+# imported directly from upstream (github.com/kubernetes-sigs/kro/api/v1alpha1).
+# Leave these imports as-is — they resolve to our go.mod dependency.
+#
+# Files that reference ResourceGraphDefinition (which becomes our ResourceGraph)
+# need a SECOND import added WITH AN ALIAS to avoid a package name collision:
+#   input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
+# Both packages are named "v1alpha1" in Go, so the alias is required.
+# Use input.ResourceGraph to reference our type.
+# This is handled during Phase 3 (Re-Apply Adaptations), not here.
+# The affected files are: graph/builder.go, graph/validation.go,
+# testutil/generator/resourcegraphdefinition.go.
 ```
 
 **COMMIT CHECKPOINT 2: Import paths fixed**
@@ -258,9 +260,9 @@ chore(upgrade): fix import paths for function-kro
 
 Mechanical transformation of import paths:
 - github.com/kubernetes-sigs/kro/pkg/ → github.com/crossplane-contrib/function-kro/kro/
-- github.com/kubernetes-sigs/kro/api/ → github.com/crossplane-contrib/function-kro/input/
 
-No functional changes, just import path updates.
+api/v1alpha1 imports are left as-is — those types are imported directly
+from upstream as a Go dependency. No functional changes.
 EOF
 )"
 ```
@@ -422,7 +424,7 @@ the previous commit reveals all our adaptations clearly.
 
 If upstream added features that function-kro should support (e.g., Collections/forEach):
 
-1. **Update input types** (`input/v1beta1/input.go`) with new fields
+1. **Bump the `github.com/kubernetes-sigs/kro` dependency** to pick up new fields on `Resource`, `ExternalRef`, `ForEachDimension`, etc. automatically. Only update `input/v1alpha1/input.go` if the new fields affect `ResourceGraph` (our unique type).
 2. **Update fn.go** to handle new runtime behaviors
 3. **Add tests** for new functionality
 
@@ -593,7 +595,7 @@ Based on the v0.9.0 audit, these are all files we modify from upstream:
 | `kro/metadata/finalizers.go` | Import path change |
 | `kro/metadata/labels.go` | Import path change |
 | `kro/metadata/groupversion.go` | Import path change; remove `GetResourceGraphDefinitionInstanceGVR` |
-| `kro/testutil/generator/resourcegraphdefinition.go` | Adapted for v1beta1 types; added `BuildTestXRSchema` |
+| `kro/testutil/generator/resourcegraphdefinition.go` | Adapted for our input types; added `BuildTestXRSchema` |
 
 ### Files We Intentionally Exclude
 
@@ -625,7 +627,7 @@ Examples of upstream packages we skip (non-exhaustive):
 
 | Upstream Package | Why We Skip It |
 |------------------|----------------|
-| `api/` (or `apis/`) | We have our own input types (`input/v1beta1/`) |
+| `api/` (or `apis/`) | We import `v1alpha1` types as a Go dependency, not vendored |
 | `pkg/controller/` | Replaced by Crossplane function framework (`fn.go`) |
 | `pkg/simpleschema/` | Crossplane provides OpenAPI schemas directly |
 | `pkg/dynamiccontroller/` | Replaced by Crossplane function framework |

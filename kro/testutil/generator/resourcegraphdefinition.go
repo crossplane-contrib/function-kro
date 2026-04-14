@@ -23,11 +23,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"github.com/crossplane-contrib/function-kro/input/v1beta1"
+	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+
+	input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
 )
 
 // ResourceGraphDefinitionOption is a functional option for ResourceGraph
-type ResourceGraphDefinitionOption func(*v1beta1.ResourceGraph)
+type ResourceGraphDefinitionOption func(*input.ResourceGraph)
 
 // SchemaOption is a functional option for Schema configuration.
 // In function-kro, schema is handled externally, so this is kept for
@@ -37,9 +39,9 @@ type SchemaOption func(map[string]interface{})
 
 // NewResourceGraphDefinition creates a new ResourceGraph with the given name and options.
 // This is adapted from upstream KRO's generator to work with function-kro's
-// v1beta1.ResourceGraph type instead of v1alpha1.ResourceGraphDefinition.
-func NewResourceGraphDefinition(name string, opts ...ResourceGraphDefinitionOption) *v1beta1.ResourceGraph {
-	rg := &v1beta1.ResourceGraph{
+// input.ResourceGraph type instead of v1alpha1.ResourceGraphDefinition.
+func NewResourceGraphDefinition(name string, opts ...ResourceGraphDefinitionOption) *input.ResourceGraph {
+	rg := &input.ResourceGraph{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
@@ -57,7 +59,7 @@ func NewResourceGraphDefinition(name string, opts ...ResourceGraphDefinitionOpti
 // upstream are adapted: status becomes the ResourceGraph.Status field,
 // and spec information is stored as annotations for test extraction.
 func WithSchema(kind, version string, spec, status map[string]interface{}, opts ...SchemaOption) ResourceGraphDefinitionOption {
-	return func(rg *v1beta1.ResourceGraph) {
+	return func(rg *input.ResourceGraph) {
 		if status != nil {
 			rawStatus, err := json.Marshal(status)
 			if err != nil {
@@ -106,12 +108,12 @@ func WithSchema(kind, version string, spec, status map[string]interface{}, opts 
 // WithExternalRef adds an external reference to the ResourceGraph.
 func WithExternalRef(
 	id string,
-	externalRef *v1beta1.ExternalRef,
+	externalRef *v1alpha1.ExternalRef,
 	readyWhen []string,
 	includeWhen []string,
 ) ResourceGraphDefinitionOption {
-	return func(rg *v1beta1.ResourceGraph) {
-		rg.Resources = append(rg.Resources, &v1beta1.Resource{
+	return func(rg *input.ResourceGraph) {
+		rg.Resources = append(rg.Resources, &v1alpha1.Resource{
 			ID:          id,
 			ReadyWhen:   readyWhen,
 			IncludeWhen: includeWhen,
@@ -124,11 +126,11 @@ func WithExternalRef(
 // This is an invalid combination and should fail validation - used for testing.
 func WithExternalRefAndForEach(
 	id string,
-	externalRef *v1beta1.ExternalRef,
-	forEach []v1beta1.ForEachDimension,
+	externalRef *v1alpha1.ExternalRef,
+	forEach []v1alpha1.ForEachDimension,
 ) ResourceGraphDefinitionOption {
-	return func(rg *v1beta1.ResourceGraph) {
-		rg.Resources = append(rg.Resources, &v1beta1.Resource{
+	return func(rg *input.ResourceGraph) {
+		rg.Resources = append(rg.Resources, &v1alpha1.Resource{
 			ID:          id,
 			ExternalRef: externalRef,
 			ForEach:     forEach,
@@ -143,12 +145,12 @@ func WithResource(
 	readyWhen []string,
 	includeWhen []string,
 ) ResourceGraphDefinitionOption {
-	return func(rg *v1beta1.ResourceGraph) {
+	return func(rg *input.ResourceGraph) {
 		raw, err := json.Marshal(template)
 		if err != nil {
 			panic(err)
 		}
-		rg.Resources = append(rg.Resources, &v1beta1.Resource{
+		rg.Resources = append(rg.Resources, &v1alpha1.Resource{
 			ID:          id,
 			ReadyWhen:   readyWhen,
 			IncludeWhen: includeWhen,
@@ -190,7 +192,7 @@ func WithScope(scope string) SchemaOption {
 //
 // The returned schema has the standard Kubernetes object shape:
 // apiVersion, kind, metadata, spec (from the annotation), and status (empty object).
-func BuildTestXRSchema(rg *v1beta1.ResourceGraph) *spec.Schema {
+func BuildTestXRSchema(rg *input.ResourceGraph) *spec.Schema {
 	specProps := make(map[string]spec.Schema)
 
 	// Load custom types if present
@@ -334,16 +336,16 @@ func simpleSchemaToSpecWithTypes(v interface{}, customTypes map[string]interface
 func WithResourceCollection(
 	id string,
 	template map[string]interface{},
-	forEach []v1beta1.ForEachDimension,
+	forEach []v1alpha1.ForEachDimension,
 	readyWhen []string,
 	includeWhen []string,
 ) ResourceGraphDefinitionOption {
-	return func(rg *v1beta1.ResourceGraph) {
+	return func(rg *input.ResourceGraph) {
 		raw, err := json.Marshal(template)
 		if err != nil {
 			panic(err)
 		}
-		rg.Resources = append(rg.Resources, &v1beta1.Resource{
+		rg.Resources = append(rg.Resources, &v1alpha1.Resource{
 			ID:          id,
 			ReadyWhen:   readyWhen,
 			IncludeWhen: includeWhen,
