@@ -303,9 +303,9 @@ func (f *Function) buildResolverFromSchemas(req *fnv1.RunFunctionRequest, gvks [
 		schemas[gvk] = specSchema
 	}
 
-	// There are no schemas we care about yet
+	// Crossplane responded with required schemas, but we have no usable schemas from the response.
 	if len(schemas) == 0 {
-		return nil, nil, nil
+		return nil, nil, errors.New("no usable schemas found in response")
 	}
 
 	// Create the schema map resolver
@@ -367,9 +367,9 @@ func (f *Function) buildResolverFromCRDs(req *fnv1.RunFunctionRequest, gvks []sc
 		crds = append(crds, crd)
 	}
 
+	// Crossplane responded to our request for CRDs, but we have no usable CRDS from the response.
 	if len(crds) == 0 {
-		// No CRDs available yet.
-		return nil, nil, nil
+		return nil, nil, errors.New("no usable CRDs found in response")
 	}
 
 	// Create combined resolver from CRDs.

@@ -316,6 +316,143 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
+		"EmptySchemasFromRequiredSchemas": {
+			reason: "When Crossplane responds via required_schemas but all schemas are nil, the function should return a fatal error rather than silently returning empty desired state",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"bucketName": "${bucket.status.atProvider.id}"
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					// Crossplane responded with schema entries but all are nil,
+					// simulating a problem causing all schemas to not be found.
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": nil,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": nil,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						// we should be returning a fatal result, we don't have usable schemas and we can't compose desired resources
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  "cannot process schemas: no usable schemas found in response",
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
+		"EmptyCRDsFromRequiredResources": {
+			reason: "When Crossplane responds via required_resources but all CRD entries are empty, the function should return a fatal error rather than silently returning empty desired state",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"bucketName": "${bucket.status.atProvider.id}"
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					// Crossplane responded for all GVKs but with empty items,
+					// simulating CRDs that couldn't be found.
+					RequiredResources: map[string]*fnv1.Resources{
+						"example.crossplane.io/v1, Kind=XBucket": {Items: []*fnv1.Resource{}},
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": {Items: []*fnv1.Resource{}},
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Resources: map[string]*fnv1.ResourceSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "apiextensions.k8s.io/v1",
+								Kind:       "CustomResourceDefinition",
+								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "xbuckets.example.crossplane.io"},
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "apiextensions.k8s.io/v1",
+								Kind:       "CustomResourceDefinition",
+								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "buckets.s3.aws.upbound.io"},
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						// we should return a fatal result because we have no CRD schemas to use
+						// and cannot compose desired resources without them
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  "cannot process schemas: no usable CRDs found in response",
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
 		"DesiredXROnlyContainsDeclaredStatus": {
 			reason: "The desired XR should contain resolved status expressions but not observed XR metadata (uid, resourceVersion) or existing status (conditions)",
 			args: args{
