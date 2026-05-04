@@ -179,7 +179,8 @@ spec:
                   description: |-
                     ReadyWhen is a list of CEL expressions that determine when this resource is considered ready.
                     All expressions must evaluate to true for the resource to be ready.
-                    If not specified, the resource is considered ready when it exists.
+                    If not specified, readiness is left as ReadyUnspecified so that later functions in the pipeline
+                    (like function-auto-ready) can determine readiness using their own logic.
                     Examples:
                     - Single resource: ["database.status.phase == 'Running'", "database.status.readyReplicas > 0"]
                     - Collection: ["each.status.phase == 'Running'"]
