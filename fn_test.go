@@ -8,6 +8,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 
@@ -52,18 +53,76 @@ func buildSchema(additionalProps string) *fnv1.Schema {
 // defined once here and referenced by name in the test table.
 var (
 	schemaXBucket = buildSchema(`
-		"spec": {"type": "object", "properties": {"bucketName": {"type": "string"}, "configMapName": {"type": "string"}, "enableLogging": {"type": "boolean"}, "regions": {"type": "array", "items": {"type": "string"}}}},
-		"status": {"type": "object", "properties": {"bucketName": {"type": "string"}, "bucketARN": {"type": "string"}, "region": {"type": "string"}, "regionCount": {"type": "integer"}}}`)
+		"spec": {
+			"type": "object",
+			"properties": {
+				"bucketName": {"type": "string"},
+				"configMapName": {"type": "string"},
+				"enableLogging": {"type": "boolean"},
+				"regions": {"type": "array", "items": {"type": "string"}},
+				"replicas": {"type": "integer"}
+			}
+		},
+		"status": {
+			"type": "object",
+			"properties": {
+				"bucketName": {"type": "string"},
+				"bucketARN": {"type": "string"},
+				"region": {"type": "string"},
+				"regionCount": {"type": "integer"},
+				"port": {"x-kubernetes-int-or-string": true}
+			}
+		}`)
 
 	schemaBucket = buildSchema(`
-		"spec": {"type": "object", "properties": {"forProvider": {"type": "object", "properties": {"region": {"type": "string"}, "objectLockEnabled": {"type": "boolean"}}}, "managementPolicies": {"type": "array", "items": {"type": "string"}}}},
-		"status": {"type": "object", "properties": {"atProvider": {"type": "object", "properties": {"arn": {"type": "string"}, "id": {"type": "string"}}}}}`)
+		"spec": {
+			"type": "object",
+			"properties": {
+				"forProvider": {
+					"type": "object",
+					"properties": {
+						"region": {"type": "string"},
+						"objectLockEnabled": {"type": "boolean"},
+						"replicas": {"type": "integer"}
+					}
+				},
+				"managementPolicies": {"type": "array", "items": {"type": "string"}}
+			}
+		},
+		"status": {
+			"type": "object",
+			"properties": {
+				"atProvider": {
+					"type": "object",
+					"properties": {
+						"arn": {"type": "string"},
+						"id": {"type": "string"},
+						"objectCount": {"type": "integer"},
+						"port": {"x-kubernetes-int-or-string": true}
+					}
+				}
+			}
+		}`)
 
 	schemaBucketLogging = buildSchema(`
-		"spec": {"type": "object", "properties": {"forProvider": {"type": "object", "properties": {"bucket": {"type": "string"}, "targetPrefix": {"type": "string"}}}}}`)
+		"spec": {
+			"type": "object",
+			"properties": {
+				"forProvider": {
+					"type": "object",
+					"properties": {
+						"bucket": {"type": "string"},
+						"targetPrefix": {"type": "string"}
+					}
+				}
+			}
+		}`)
 
 	schemaConfigMap = buildSchema(`
-		"data": {"type": "object", "additionalProperties": {"type": "string"}}`)
+		"data": {
+			"type": "object",
+			"additionalProperties": {"type": "string"}
+		}`)
 )
 
 func TestRunFunction(t *testing.T) {
@@ -546,6 +605,307 @@ func TestRunFunction(t *testing.T) {
 								"kind": "XBucket",
 								"status": {
 									"bucketName": "test-bucket-xyz"
+								}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"SchemaSpecIntegerResolvesIntoResource": {
+			reason: "An integer read from the XR's spec (schema.spec.*) into a resource template resolves successfully.",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2",
+										"replicas": "${schema.spec.replicas}"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							// The integer for spec.replicas should get decoded/processed and be readable by the KRO runtime
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {"bucketName": "my-bucket", "replicas": 3}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								// The integer from schema.spec.replicas should land successfully in
+								// the rendered template as a number.
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2",
+											"replicas": 3
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"ObservedIntegerResolvesIntoStatus": {
+			reason: "An integer-typed field read from an observed composed resource resolves successfully into XR status.",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"bucketName": "${bucket.status.atProvider.id}",
+							"regionCount": "${bucket.status.atProvider.objectCount}"
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {"bucketName": "my-bucket"}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								// objectCount is an integer in the schema, and we should process it
+								// correctly and hand it off to KRO in the format it expects
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-xyz"},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									},
+									"status": {
+										"atProvider": {
+											"id": "test-bucket-xyz",
+											"objectCount": 5
+										}
+									}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							// The integer read from observed state lands in status as a
+							// number, alongside the string field.
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"status": {
+									"bucketName": "test-bucket-xyz",
+									"regionCount": 5
+								}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"ObservedIntOrStringResolvesIntoStatus": {
+			reason: "An x-kubernetes-int-or-string field holding an integer, read from an observed composed resource, resolves into XR status.",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"port": "${bucket.status.atProvider.port}"
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {"bucketName": "my-bucket"}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								// port is x-kubernetes-int-or-string and we're using the integer
+								// variant here. This should be proccessed and handed to KRO runtime
+								// successfully in a format it expects.
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-xyz"},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									},
+									"status": {
+										"atProvider": {
+											"port": 8080
+										}
+									}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							// the x-kubernetes-int-or-string port value should have successfully
+							// made it into the status of the XR
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"status": {
+									"port": 8080
 								}
 							}`),
 						},
@@ -1928,5 +2288,72 @@ func TestRunFunctionOmitRemovesField(t *testing.T) {
 
 	if diff := cmp.Diff(nil, err, cmpopts.EquateErrors()); diff != "" {
 		t.Errorf("omit() should not return a Go error\nf.RunFunction(...): -want err, +got err:\n%s", diff)
+	}
+}
+
+func TestDecodeAsK8sAPI(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		in     []*unstructured.Unstructured
+		want   []*unstructured.Unstructured
+	}{
+		"WholeNumberFloatBecomesInt64": {
+			reason: "A whole-number float64 (how structpb delivers integers) is converted to int64.",
+			in:     []*unstructured.Unstructured{{Object: map[string]any{"replicas": float64(3)}}},
+			want:   []*unstructured.Unstructured{{Object: map[string]any{"replicas": int64(3)}}},
+		},
+		"FractionalFloatStaysFloat64": {
+			reason: "A genuinely fractional float64 is preserved as float64.",
+			in:     []*unstructured.Unstructured{{Object: map[string]any{"ratio": float64(2.5)}}},
+			want:   []*unstructured.Unstructured{{Object: map[string]any{"ratio": float64(2.5)}}},
+		},
+		"NestedMapsAndSlices": {
+			reason: "Whole-number floats are converted at any depth, inside both maps and slices.",
+			in: []*unstructured.Unstructured{{Object: map[string]any{
+				"spec": map[string]any{
+					"replicas": float64(2),
+					"ports":    []any{float64(80), float64(443)},
+				},
+			}}},
+			want: []*unstructured.Unstructured{{Object: map[string]any{
+				"spec": map[string]any{
+					"replicas": int64(2),
+					"ports":    []any{int64(80), int64(443)},
+				},
+			}}},
+		},
+		"NonNumbersUntouched": {
+			reason: "Strings, bools, and nulls pass through unchanged.",
+			in:     []*unstructured.Unstructured{{Object: map[string]any{"name": "app", "enabled": true, "note": nil}}},
+			want:   []*unstructured.Unstructured{{Object: map[string]any{"name": "app", "enabled": true, "note": nil}}},
+		},
+		"NilPointerSkipped": {
+			reason: "A nil *Unstructured is skipped rather than panicking.",
+			in:     []*unstructured.Unstructured{nil},
+			want:   []*unstructured.Unstructured{nil},
+		},
+		"EmptyObjectSkipped": {
+			reason: "An Unstructured with no content is skipped rather than panicking.",
+			in:     []*unstructured.Unstructured{{}},
+			want:   []*unstructured.Unstructured{{}},
+		},
+		"NoObjects": {
+			reason: "No arguments at all is a no-op.",
+			in:     nil,
+			want:   nil,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			// decodeAsK8sAPI mutates its arguments in place, so we diff the
+			// (now-decoded) input slice against want.
+			if err := decodeAsK8sAPI(tc.in...); err != nil {
+				t.Fatalf("%s\ndecodeAsK8sAPI(...): unexpected error: %v", tc.reason, err)
+			}
+			if diff := cmp.Diff(tc.want, tc.in); diff != "" {
+				t.Errorf("%s\ndecodeAsK8sAPI(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
 	}
 }
