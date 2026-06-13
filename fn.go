@@ -55,7 +55,7 @@ func NewFunction(log logging.Logger, rgdConfig graph.RGDConfig) *Function {
 }
 
 // RunFunction runs the Function.
-func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
+func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) { //nolint:gocognit // Readability is better with the logic inline.
 	f.log.Debug("Running function", "tag", req.GetMeta().GetTag(), "advertisesCapabilities", request.AdvertisesCapabilities(req), "capabilities", req.GetMeta().GetCapabilities())
 	rsp := response.To(req, response.DefaultTTL)
 
