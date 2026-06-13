@@ -2,7 +2,7 @@
 
 These examples demonstrate the key capabilities of `function-kro`, from basic resource
 dependencies through conditional creation, readiness checks, external references,
-collections, field omission, and collection size limits.
+collections, field omission, core Kubernetes resources, composing a Kubernetes application, and collection size limits.
 
 ## Pre-Requisites
 
@@ -387,13 +387,13 @@ integers before evaluation.
 
 Create the `App` XRD and composition:
 ```shell
-kubectl apply -f deployment/xrd.yaml
-kubectl apply -f deployment/composition.yaml
+kubectl apply -f app/xrd.yaml
+kubectl apply -f app/composition.yaml
 ```
 
 Create an `App` instance:
 ```shell
-kubectl apply -f deployment/xr.yaml
+kubectl apply -f app/xr.yaml
 ```
 
 Watch the `App` become ready once the Deployment and Service satisfy their
@@ -412,9 +412,9 @@ kubectl get app.example.crossplane.io/my-app -o json | jq '.status | {replicas, 
 ### Clean-up
 
 ```shell
-kubectl delete -f deployment/xr.yaml
-kubectl delete -f deployment/composition.yaml
-kubectl delete -f deployment/xrd.yaml
+kubectl delete -f app/xr.yaml
+kubectl delete -f app/composition.yaml
+kubectl delete -f app/xrd.yaml
 ```
 
 ## Collection Limits Example
