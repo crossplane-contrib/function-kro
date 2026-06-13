@@ -55,7 +55,7 @@ func NewFunction(log logging.Logger, rgdConfig graph.RGDConfig) *Function {
 }
 
 // RunFunction runs the Function.
-func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
+func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) { //nolint:gocognit // Readability is better with the logic inline.
 	f.log.Debug("Running function", "tag", req.GetMeta().GetTag(), "advertisesCapabilities", request.AdvertisesCapabilities(req), "capabilities", req.GetMeta().GetCapabilities())
 	rsp := response.To(req, response.DefaultTTL)
 
@@ -66,10 +66,15 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// Get the observed XR
+	// Get the observed XR and decode it in a format KRO expects
 	oxr, err := request.GetObservedCompositeResource(req)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot get observed composite resource"))
+		return rsp, nil
+	}
+
+	if err := decodeAsK8sAPI(&oxr.Resource.Unstructured); err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot decode observed composite resource as Kubernetes API object"))
 		return rsp, nil
 	}
 
@@ -143,6 +148,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 			for i, res := range resources {
 				observed[i] = res.Resource
 			}
+			// make sure all observed objects are decoded in the format KRO expects
+			if err := decodeAsK8sAPI(observed...); err != nil {
+				response.Fatal(rsp, errors.Wrapf(err, "cannot decode external resources for %q as Kubernetes API objects", r.ID))
+				return rsp, nil
+			}
 			f.log.Debug("SetObserved external ref", "id", r.ID, "externalRef", r.ExternalRef, "count", len(observed))
 			node.SetObserved(observed)
 		}
@@ -174,6 +184,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	// Set observed state on each node so the KRO runtime has access to all its
 	// observed fields/values to use when evaluating expressions.
 	for id, observed := range observedByNodeID {
+		// make sure all observed objects are decoded in the format KRO expects
+		if err := decodeAsK8sAPI(observed...); err != nil {
+			response.Fatal(rsp, errors.Wrapf(err, "cannot decode observed composed resources for %q as Kubernetes API objects", id))
+			return rsp, nil
+		}
 		nodesByID[id].SetObserved(observed)
 	}
 
@@ -209,6 +224,35 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	return rsp, nil
+}
+
+// decodeAsK8sAPI re-decodes the supplied objects in place using the same JSON decoder the API
+// server uses, so KRO sees the data exactly as it would reading straight from the API server.
+//
+// Standalone KRO reads observed state from the API server. We instead receive it from Crossplane
+// over gRPC, where every JSON number is a double and function-sdk-go leaves them as float64. The
+// most visible consequence is integers: KRO is happy with what it gets from the API server (int64),
+// but is not happy with the float64 type we get from gRPC/function-sdk-go if we were to pass that
+// directly to KRO.
+//
+// Round-tripping through k8sjson.Unmarshal re-decodes the data more like how reading from the API
+// server would, so the data format KRO gets matches what it expects.
+func decodeAsK8sAPI(objs ...*unstructured.Unstructured) error {
+	for _, u := range objs {
+		if u == nil || u.Object == nil {
+			continue
+		}
+		b, err := json.Marshal(u.Object)
+		if err != nil {
+			return errors.Wrapf(err, "cannot marshal %s/%s", u.GetKind(), u.GetName())
+		}
+		out := map[string]any{}
+		if err := k8sjson.Unmarshal(b, &out); err != nil {
+			return errors.Wrapf(err, "cannot unmarshal %s/%s", u.GetKind(), u.GetName())
+		}
+		u.Object = out
+	}
+	return nil
 }
 
 // collectGVKs returns the GVKs for the XR and every resource in the graph.

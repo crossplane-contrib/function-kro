@@ -120,7 +120,7 @@ function-kro/
 │   ├── v0.8.x_PATCHES.md   # Historical v0.8.x adaptation reference
 │   └── UPGRADE_PROCESS.md   # Process for upgrading from upstream KRO
 ├── package/                 # Crossplane package definition
-├── example/                 # Usage examples (basic, collections, conditionals, externalref, readiness)
+├── example/                 # Usage examples (basic, collections, conditionals, externalref, readiness, omit, core, app, collection-limits)
 ├── scripts/                 # Build scripts (build-local.sh, diff-upstream-kro.sh)
 └── Dockerfile               # Production build
 ```
@@ -352,7 +352,7 @@ The runtime deduplicates CEL expression evaluation via a shared `expressionsCach
 - `patches/v0.8.x_PATCHES.md` — Historical reference for KRO v0.8.x adaptations (superseded by v0.9.0)
 - `patches/UPGRADE_PROCESS.md` — Process for upgrading from upstream KRO releases
 - `spec-desired-ssa.md` — Original SSA design spec (references older API names; implementation evolved)
-- `example/README.md` — Working examples for all major features (basic, collections, conditionals, externalref, readiness, omit, collection-limits)
+- `example/README.md` — Working examples for all major features (basic, collections, conditionals, externalref, readiness, omit, core, app, collection-limits)
 
 ## Auditing Our Code Against Upstream KRO
 

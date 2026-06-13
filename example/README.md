@@ -2,7 +2,7 @@
 
 These examples demonstrate the key capabilities of `function-kro`, from basic resource
 dependencies through conditional creation, readiness checks, external references,
-collections, field omission, and collection size limits.
+collections, field omission, core Kubernetes resources, composing a Kubernetes application, and collection size limits.
 
 ## Pre-Requisites
 
@@ -65,7 +65,7 @@ kubectl apply -f basic/xr.yaml
 
 Watch the composed resources being created and the status being updated:
 ```shell
-crossplane beta trace -w networkingstack.example.crossplane.io/cool-network
+crossplane resource trace -w networkingstack.example.crossplane.io/cool-network
 ```
 
 We can see the aggregated networking info in the XR status, which includes the VPC ID,
@@ -108,7 +108,7 @@ kubectl apply -f conditionals/xr.yaml
 Watch the composed resources being created and note that conditional resources are only
 included when their flags are set to `true`:
 ```shell
-crossplane beta trace -w networkingstack.conditionals.example.crossplane.io/cool-network
+crossplane resource trace -w networkingstack.conditionals.example.crossplane.io/cool-network
 ```
 
 We can see the status reflects which resources were actually created:
@@ -155,7 +155,7 @@ kubectl apply -f readiness/xr.yaml
 Watch the composed resources being created and observe how readiness propagates as each
 resource satisfies its `readyWhen` conditions:
 ```shell
-crossplane beta trace -w networkingstack.readiness.example.crossplane.io/cool-network
+crossplane resource trace -w networkingstack.readiness.example.crossplane.io/cool-network
 ```
 
 We can see the aggregated status once all resources are ready:
@@ -206,7 +206,7 @@ kubectl apply -f externalref/xr.yaml
 Watch the composed resources being created with configuration sourced from the external
 ConfigMap:
 ```shell
-crossplane beta trace -w networkingstack.externalref.example.crossplane.io/cool-network
+crossplane resource trace -w networkingstack.externalref.example.crossplane.io/cool-network
 ```
 
 We can see the platform configuration pulled from the single external ConfigMap:
@@ -265,7 +265,7 @@ kubectl apply -f collections/xr.yaml
 Watch the composed resources being created and note that a subnet is created for each
 availability zone in the input array:
 ```shell
-crossplane beta trace -w networkingstack.collections.example.crossplane.io/cool-network
+crossplane resource trace -w networkingstack.collections.example.crossplane.io/cool-network
 ```
 
 We can see the array of subnet IDs collected from all dynamically created subnets:
@@ -310,7 +310,7 @@ kubectl apply -f omit/xr.yaml
 
 Watch the composed resources being created:
 ```shell
-crossplane beta trace -w networkingstack.omit.example.crossplane.io/cool-network
+crossplane resource trace -w networkingstack.omit.example.crossplane.io/cool-network
 ```
 
 We can inspect the composed VPC's `forProvider` spec and confirm that `enableDnsHostnames`
@@ -360,7 +360,7 @@ kubectl apply -f core/xr.yaml
 
 Watch the XR become ready when its composed resources satisfy their `readyWhen` conditions:
 ```shell
-crossplane beta trace -w coolsecret.core.example.crossplane.io/cool-secret
+crossplane resource trace -w coolsecret.core.example.crossplane.io/cool-secret
 ```
 
 ### Clean-up
@@ -369,6 +369,52 @@ crossplane beta trace -w coolsecret.core.example.crossplane.io/cool-secret
 kubectl delete -f core/xr.yaml
 kubectl delete -f core/composition.yaml
 kubectl delete -f core/xrd.yaml
+```
+
+## Kubernetes App Example
+
+This example mirrors the [upstream Crossplane composition getting-started
+guide](https://docs.crossplane.io/latest/get-started/get-started-with-composition/):
+an `App` XR composes a native Kubernetes `Deployment` and `Service`, then
+aggregates their observed state back into the XR status. It needs no cloud
+provider or credentials.
+
+It also exercises function-kro's handling of integer fields. `status.replicas` is
+an `integer` read from the Deployment's observed `availableReplicas`. Crossplane
+delivers every observed number to functions as a float64, so this field only
+populates correctly because function-kro normalizes whole numbers back to
+integers before evaluation.
+
+Create the `App` XRD and composition:
+```shell
+kubectl apply -f app/xrd.yaml
+kubectl apply -f app/composition.yaml
+```
+
+Create an `App` instance:
+```shell
+kubectl apply -f app/xr.yaml
+```
+
+Watch the `App` become ready once the Deployment and Service satisfy their
+`readyWhen` conditions:
+```shell
+crossplane resource trace app.example.crossplane.io/my-app --watch
+```
+
+Once the Deployment has rolled out, confirm both aggregated status fields are
+populated: `replicas` equals the Deployment's available replica count (`2`) and
+`address` holds the Service's cluster IP:
+```shell
+kubectl get app.example.crossplane.io/my-app -o json | jq '.status | {replicas, address}'
+```
+
+### Clean-up
+
+```shell
+kubectl delete -f app/xr.yaml
+kubectl delete -f app/composition.yaml
+kubectl delete -f app/xrd.yaml
 ```
 
 ## Collection Limits Example
@@ -395,7 +441,7 @@ kubectl apply -f collection-limits/xr.yaml
 
 Watch the composed resources being created — 3 subnets are within the limit of 5:
 ```shell
-crossplane beta trace -w networkingstack.collectionlimits.example.crossplane.io/cool-network
+crossplane resource trace -w networkingstack.collectionlimits.example.crossplane.io/cool-network
 ```
 
 We can see the array of subnet IDs collected from all dynamically created subnets:
@@ -410,7 +456,7 @@ kubectl apply -f collection-limits/xr-exceed.yaml
 
 Watch the trace to see the fatal error indicating the collection size was exceeded:
 ```shell
-crossplane beta trace networkingstack.collectionlimits.example.crossplane.io/cool-network -o wide
+crossplane resource trace networkingstack.collectionlimits.example.crossplane.io/cool-network -o wide
 ```
 
 ### Clean-up
