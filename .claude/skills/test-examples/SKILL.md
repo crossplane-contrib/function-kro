@@ -74,17 +74,19 @@ Verify each apply succeeds (exit code 0). If an apply fails, this is a **FAIL**.
 
 Run the `kubectl apply` command for the XR.
 
-Then poll for readiness. Run `crossplane beta trace <resource>` every 15 seconds until:
+Then poll for readiness. Run `crossplane resource trace <resource>` every 15 seconds until:
 - **Success case:** All resources show `SYNCED=True` and `READY=True` (or the expected state for this example)
 - **Failure case:** An expected fatal error appears (e.g., collection limits example)
 - **Timeout:** 5 minutes with no progress — this is a **FAIL**
 
 The README's description tells you which case to expect. Most examples expect all resources to become Ready. The collection limits example expects a fatal error after applying the exceed file.
 
-**IMPORTANT — Parsing trace output:** The `crossplane beta trace` output uses tree-drawing characters (`├─`, `└─`) that shift columns and break `awk`-based column parsing. Do NOT parse columns with awk or cut. Instead, use this simple and robust approach:
+**Namespace note:** these XRDs are `Namespaced` (the Crossplane v2 default), so the XRs live in a namespace (`default` in these examples). `crossplane resource trace` resolves the namespace like `kubectl` does: it uses the kubeconfig context's namespace when `-n` is omitted, which is `default` on a fresh cluster. Pass `-n <namespace>` only if your context is pointed elsewhere.
+
+**IMPORTANT — Parsing trace output:** The `crossplane resource trace` output uses tree-drawing characters (`├─`, `└─`) that shift columns and break `awk`-based column parsing. Do NOT parse columns with awk or cut. Instead, use this simple and robust approach:
 
 ```bash
-OUTPUT=$(crossplane beta trace <resource> 2>&1)
+OUTPUT=$(crossplane resource trace <resource> 2>&1)
 echo "$OUTPUT"
 # Ready: output contains "True" and does NOT contain "False"
 if echo "$OUTPUT" | grep -q "True" && ! echo "$OUTPUT" | grep -q "False"; then
