@@ -111,6 +111,8 @@ See the [`example/`](example/) directory for complete working examples:
 | [externalref](example/externalref/) | Referencing existing cluster resources outside of the XR/composition |
 | [collections](example/collections/) | Dynamic resource expansion with `forEach` |
 | [omit](example/omit/) | Conditional field removal using the `omit()` CEL function |
+| [core](example/core/) | Composing native Kubernetes resources such as a `Secret` |
+| [Kubernetes App](example/app/) | Composing a native `Deployment` and `Service`, similar to the Crossplane docs [getting stated][get-started] guide |
 | [collection-limits](example/collection-limits/) | Enforcing maximum collection size limits |
 
 See the [examples README](example/README.md) for setup instructions and walkthroughs.
@@ -148,3 +150,4 @@ Apache 2.0. See [LICENSE](LICENSE) for details.
 [cel]: https://github.com/google/cel-go
 [crossplane-diff]: https://github.com/crossplane-contrib/crossplane-diff
 [slack]: https://slack.crossplane.io
+[get-started]: https://docs.crossplane.io/latest/get-started/get-started-with-composition/
