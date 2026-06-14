@@ -9,7 +9,7 @@ require (
 	github.com/google/cel-go v0.28.1
 	github.com/google/go-cmp v0.7.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/kubernetes-sigs/kro v0.9.1
+	github.com/kubernetes-sigs/kro v0.9.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976
