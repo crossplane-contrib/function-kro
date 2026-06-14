@@ -32,7 +32,7 @@ Do NOT delete or recreate an existing cluster. This is a safety guardrail — th
 **If no cluster exists**, proceed with setup. Read the `## Pre-Requisites` section of `example/README.md` and execute every step — cluster creation, Crossplane install, extensions, and AWS credential configuration. The README is the source of truth for setup; do not hardcode those steps here.
 
 After setup completes, verify the full stack is working:
-- All packages are installed and healthy (`kubectl get pkg` — all should show `INSTALLED=True` and `HEALTHY=True`)
+- All packages are installed and healthy. Packages take a few minutes to pull, so poll `kubectl get pkg` until every row shows `INSTALLED=True` and `HEALTHY=True`. Note it prints separate Function and Provider tables, each with its own header row, so don't parse columns with awk/cut; reuse the `grep -q True && ! grep -q False` approach from Phase 3.2.
 - ProviderConfig exists and is ready
 
 If any setup step fails, **STOP** and report the failure with full output. Do not attempt examples with a broken setup.
