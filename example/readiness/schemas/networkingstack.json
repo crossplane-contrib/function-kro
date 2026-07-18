@@ -1,0 +1,80 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "readiness.example.crossplane.io",
+    "version": "v1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "io.crossplane.example.readiness.v1.NetworkingStack": {
+        "type": "object",
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string"
+              }
+            }
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "networkingInfo": {
+                "type": "object",
+                "properties": {
+                  "vpcID": {
+                    "type": "string"
+                  },
+                  "subnetID": {
+                    "type": "string"
+                  },
+                  "securityGroupID": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-kubernetes-group-version-kind": [
+          {
+            "group": "readiness.example.crossplane.io",
+            "version": "v1",
+            "kind": "NetworkingStack"
+          }
+        ]
+      }
+    }
+  }
+}

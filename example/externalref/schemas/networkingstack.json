@@ -1,0 +1,111 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "externalref.example.crossplane.io",
+    "version": "v1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "io.crossplane.example.externalref.v1.NetworkingStack": {
+        "type": "object",
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "configMapName": {
+                "type": "string",
+                "description": "Name of the ConfigMap containing platform configuration"
+              }
+            }
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "networkingInfo": {
+                "type": "object",
+                "properties": {
+                  "vpcID": {
+                    "type": "string"
+                  },
+                  "subnetID": {
+                    "type": "string"
+                  },
+                  "securityGroupID": {
+                    "type": "string"
+                  }
+                }
+              },
+              "platformConfig": {
+                "type": "object",
+                "description": "Configuration read from the external ConfigMap",
+                "properties": {
+                  "region": {
+                    "type": "string"
+                  },
+                  "environment": {
+                    "type": "string"
+                  },
+                  "vpcCidr": {
+                    "type": "string"
+                  }
+                }
+              },
+              "notifications": {
+                "type": "object",
+                "description": "Aggregated data from subscriber ConfigMaps selected by label",
+                "properties": {
+                  "subscriberCount": {
+                    "type": "string"
+                  },
+                  "teams": {
+                    "type": "string"
+                  },
+                  "hasOncall": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          },
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-kubernetes-group-version-kind": [
+          {
+            "group": "externalref.example.crossplane.io",
+            "version": "v1",
+            "kind": "NetworkingStack"
+          }
+        ]
+      }
+    }
+  }
+}

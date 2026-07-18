@@ -1,25 +1,35 @@
-# Example manifests
+# Basic Example
 
-You can run your function locally and test it using `crossplane beta render`
-with these example manifests.
+Composes a VPC, three subnets, and a security group, where the subnets and
+security group depend on the VPC's ID. See the
+[Basic Example](../README.md#basic-example) in the top-level README for the full
+walkthrough on a live cluster.
+
+## Render it locally
+
+Start function-kro from the repository root:
 
 ```shell
-# Run the function locally
-$ go run . --insecure --debug
+go run . --insecure --debug
 ```
 
+Render the example:
+
 ```shell
-# Then, in another terminal, call it with these example manifests
-$ crossplane beta render xr.yaml composition.yaml functions.yaml -r
----
-apiVersion: example.crossplane.io/v1
-kind: XR
-metadata:
-  name: example-xr
----
-apiVersion: render.crossplane.io/v1beta1
-kind: Result
-message: I was run with input "Hello world"!
-severity: SEVERITY_NORMAL
-step: run-the-template
+cd example/basic
+crossplane render -r -x xr.yaml composition.yaml functions.yaml --required-schemas=schemas/
 ```
+
+This renders the composite and the VPC. The subnets and security group read
+`${vpc.status.atProvider.id}`, which is empty until a provider creates the VPC,
+so render defers them.
+
+Add `--observed-resources=observed.yaml` to supply provider-assigned IDs, as a
+cluster would:
+
+```shell
+crossplane render -r -x xr.yaml composition.yaml functions.yaml --required-schemas=schemas/ --observed-resources=observed.yaml
+```
+
+Now the whole graph renders and `status.networkingInfo` fills in with the VPC,
+subnet, and security group IDs.

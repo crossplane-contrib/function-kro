@@ -1,0 +1,33 @@
+# Observed state for `crossplane render --observed-resources`. The Deployment
+# reports availableReplicas and an Available condition; the Service reports its
+# clusterIP. Supplying these populates the aggregated status (replicas, address)
+# and satisfies the readyWhen conditions. Resources match composition nodes by
+# the crossplane.io/composition-resource-name annotation.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app-deployment
+  namespace: default
+  annotations:
+    crossplane.io/composition-resource-name: deployment
+  labels:
+    crossplane.io/composite: my-app
+status:
+  availableReplicas: 2
+  conditions:
+  - type: Available
+    status: "True"
+    reason: MinimumReplicasAvailable
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-service
+  namespace: default
+  annotations:
+    crossplane.io/composition-resource-name: service
+  labels:
+    crossplane.io/composite: my-app
+spec:
+  clusterIP: 10.96.0.42

@@ -1,0 +1,54 @@
+# Observed state for `crossplane render --observed-resources`. Each resource
+# reports a provider-assigned ID and a Ready=True condition, which is what the
+# readyWhen expressions check. Supplying these lets render resolve the
+# ${vpc.status.atProvider.id} dependencies and satisfy every readyWhen, so the
+# composite renders ready. Resources match composition nodes by the
+# crossplane.io/composition-resource-name annotation.
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: VPC
+metadata:
+  name: cool-network-vpc
+  annotations:
+    crossplane.io/composition-resource-name: vpc
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: vpc-0a1b2c3d4e5f67890
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  name: cool-network-subnet
+  annotations:
+    crossplane.io/composition-resource-name: subnet
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: subnet-0aaaaaaaaaaaaaaaa
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: SecurityGroup
+metadata:
+  name: cool-network-sg
+  annotations:
+    crossplane.io/composition-resource-name: securityGroup
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: sg-0dddddddddddddddd
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
