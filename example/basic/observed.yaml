@@ -1,0 +1,88 @@
+# Observed state for `crossplane render --observed-resources`. Each resource
+# stands in for what a provider would report on a cluster: a provider-assigned
+# ID in status.atProvider.id and a Ready condition. Supplying these lets render
+# resolve the ${vpc.status.atProvider.id} dependencies and populate the XR
+# status, showing the full graph instead of just the first wave.
+#
+# Resources match composition nodes by the crossplane.io/composition-resource-name
+# annotation.
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: VPC
+metadata:
+  name: cool-network-vpc
+  annotations:
+    crossplane.io/composition-resource-name: vpc
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: vpc-0a1b2c3d4e5f67890
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  name: cool-network-subnet-a
+  annotations:
+    crossplane.io/composition-resource-name: subnetAZA
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: subnet-0aaaaaaaaaaaaaaaa
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  name: cool-network-subnet-b
+  annotations:
+    crossplane.io/composition-resource-name: subnetAZB
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: subnet-0bbbbbbbbbbbbbbbb
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  name: cool-network-subnet-c
+  annotations:
+    crossplane.io/composition-resource-name: subnetAZC
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: subnet-0cccccccccccccccc
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: SecurityGroup
+metadata:
+  name: cool-network-sg
+  annotations:
+    crossplane.io/composition-resource-name: securityGroup
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: sg-0dddddddddddddddd
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available

@@ -1,0 +1,104 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "collections.example.crossplane.io",
+    "version": "v1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "io.crossplane.example.collections.v1.NetworkingStack": {
+        "type": "object",
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "region": {
+                "type": "string"
+              },
+              "availabilityZones": {
+                "type": "array",
+                "description": "List of availability zone suffixes (e.g., [\"a\", \"b\", \"c\"])",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "suffix": {
+                      "type": "string",
+                      "description": "AZ suffix (e.g., \"a\" for us-west-2a)"
+                    },
+                    "cidrBlock": {
+                      "type": "string",
+                      "description": "CIDR block for this subnet (e.g., \"192.168.0.0/18\")"
+                    }
+                  },
+                  "required": [
+                    "suffix",
+                    "cidrBlock"
+                  ]
+                }
+              }
+            }
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "networkingInfo": {
+                "type": "object",
+                "properties": {
+                  "vpcID": {
+                    "type": "string"
+                  },
+                  "subnetIDs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "securityGroup": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-kubernetes-group-version-kind": [
+          {
+            "group": "collections.example.crossplane.io",
+            "version": "v1",
+            "kind": "NetworkingStack"
+          }
+        ]
+      }
+    }
+  }
+}

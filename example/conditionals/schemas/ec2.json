@@ -1,0 +1,421 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Kubernetes CRD Swagger",
+    "version": "v0.1.0"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "io.upbound.m.aws.ec2.v1beta1.VPC": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "forProvider": {
+                "type": "object",
+                "properties": {
+                  "cidrBlock": {
+                    "description": "The IPv4 CIDR block for the VPC. CIDR can be explicitly set or it can be derived from IPAM using ipv4_netmask_length.",
+                    "type": "string"
+                  },
+                  "enableDnsHostnames": {
+                    "description": "A boolean flag to enable/disable DNS hostnames in the VPC. Defaults false.",
+                    "type": "boolean"
+                  },
+                  "enableDnsSupport": {
+                    "description": "A boolean flag to enable/disable DNS support in the VPC. Defaults to true.",
+                    "type": "boolean"
+                  },
+                  "region": {
+                    "description": "Region where this resource will be managed. Defaults to the Region set in the provider configuration.\nRegion is the region you'd like your resource to be created in.",
+                    "type": "string"
+                  },
+                  "tags": {
+                    "description": "Key-value map of resource tags.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "x-kubernetes-map-type": "granular"
+                  }
+                }
+              }
+            }
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "atProvider": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "description": "The ID of the VPC",
+                    "type": "string"
+                  }
+                }
+              },
+              "conditions": {
+                "description": "Conditions of the resource.",
+                "type": "array",
+                "items": {
+                  "description": "A Condition that may apply to a resource.",
+                  "type": "object",
+                  "required": [
+                    "lastTransitionTime",
+                    "reason",
+                    "status",
+                    "type"
+                  ],
+                  "properties": {
+                    "lastTransitionTime": {
+                      "description": "LastTransitionTime is the last time this condition transitioned from one\nstatus to another.",
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "message": {
+                      "description": "A Message containing details about this condition's last transition from\none status to another, if any.",
+                      "type": "string"
+                    },
+                    "observedGeneration": {
+                      "description": "ObservedGeneration represents the .metadata.generation that the condition was set based upon.\nFor instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date\nwith respect to the current state of the instance.",
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "reason": {
+                      "description": "A Reason for this condition's last transition from one status to another.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "Status of this condition; is it currently True, False, or Unknown?",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "Type of this condition. At most one of each condition type may apply to\na resource at any point in time.",
+                      "type": "string"
+                    }
+                  }
+                },
+                "x-kubernetes-list-map-keys": [
+                  "type"
+                ],
+                "x-kubernetes-list-type": "map"
+              }
+            }
+          }
+        },
+        "x-kubernetes-group-version-kind": [
+          {
+            "group": "ec2.aws.m.upbound.io",
+            "kind": "VPC",
+            "version": "v1beta1"
+          }
+        ]
+      },
+      "io.upbound.m.aws.ec2.v1beta1.Subnet": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "forProvider": {
+                "type": "object",
+                "properties": {
+                  "availabilityZone": {
+                    "description": "AZ for the subnet.",
+                    "type": "string"
+                  },
+                  "cidrBlock": {
+                    "description": "The IPv4 CIDR block for the subnet.",
+                    "type": "string"
+                  },
+                  "mapPublicIpOnLaunch": {
+                    "description": "Specify true to indicate that instances launched into the subnet should be assigned a public IP address. Default is false.",
+                    "type": "boolean"
+                  },
+                  "region": {
+                    "description": "Region where this resource will be managed. Defaults to the Region set in the provider configuration.\nRegion is the region you'd like your resource to be created in.",
+                    "type": "string"
+                  },
+                  "tags": {
+                    "description": "Key-value map of resource tags.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "x-kubernetes-map-type": "granular"
+                  },
+                  "vpcId": {
+                    "description": "The VPC ID.",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "atProvider": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "description": "The ID of the subnet",
+                    "type": "string"
+                  }
+                }
+              },
+              "conditions": {
+                "description": "Conditions of the resource.",
+                "type": "array",
+                "items": {
+                  "description": "A Condition that may apply to a resource.",
+                  "type": "object",
+                  "required": [
+                    "lastTransitionTime",
+                    "reason",
+                    "status",
+                    "type"
+                  ],
+                  "properties": {
+                    "lastTransitionTime": {
+                      "description": "LastTransitionTime is the last time this condition transitioned from one\nstatus to another.",
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "message": {
+                      "description": "A Message containing details about this condition's last transition from\none status to another, if any.",
+                      "type": "string"
+                    },
+                    "observedGeneration": {
+                      "description": "ObservedGeneration represents the .metadata.generation that the condition was set based upon.\nFor instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date\nwith respect to the current state of the instance.",
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "reason": {
+                      "description": "A Reason for this condition's last transition from one status to another.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "Status of this condition; is it currently True, False, or Unknown?",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "Type of this condition. At most one of each condition type may apply to\na resource at any point in time.",
+                      "type": "string"
+                    }
+                  }
+                },
+                "x-kubernetes-list-map-keys": [
+                  "type"
+                ],
+                "x-kubernetes-list-type": "map"
+              }
+            }
+          }
+        },
+        "x-kubernetes-group-version-kind": [
+          {
+            "group": "ec2.aws.m.upbound.io",
+            "kind": "Subnet",
+            "version": "v1beta1"
+          }
+        ]
+      },
+      "io.upbound.m.aws.ec2.v1beta1.SecurityGroup": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "spec": {
+            "type": "object",
+            "properties": {
+              "forProvider": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "description": "Security group description. Cannot be \"\". NOTE: This field maps to the AWS GroupDescription attribute, for which there is no Update API. If you'd like to classify your security groups in a way that can be updated, use tags.",
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Name of the security group.",
+                    "type": "string"
+                  },
+                  "region": {
+                    "description": "Region where this resource will be managed. Defaults to the Region set in the provider configuration.\nRegion is the region you'd like your resource to be created in.",
+                    "type": "string"
+                  },
+                  "tags": {
+                    "description": "Key-value map of resource tags.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "x-kubernetes-map-type": "granular"
+                  },
+                  "vpcId": {
+                    "description": "VPC ID. Defaults to the region's default VPC.",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "status": {
+            "type": "object",
+            "properties": {
+              "atProvider": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "description": "ID of the security group.",
+                    "type": "string"
+                  }
+                }
+              },
+              "conditions": {
+                "description": "Conditions of the resource.",
+                "type": "array",
+                "items": {
+                  "description": "A Condition that may apply to a resource.",
+                  "type": "object",
+                  "required": [
+                    "lastTransitionTime",
+                    "reason",
+                    "status",
+                    "type"
+                  ],
+                  "properties": {
+                    "lastTransitionTime": {
+                      "description": "LastTransitionTime is the last time this condition transitioned from one\nstatus to another.",
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "message": {
+                      "description": "A Message containing details about this condition's last transition from\none status to another, if any.",
+                      "type": "string"
+                    },
+                    "observedGeneration": {
+                      "description": "ObservedGeneration represents the .metadata.generation that the condition was set based upon.\nFor instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date\nwith respect to the current state of the instance.",
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "reason": {
+                      "description": "A Reason for this condition's last transition from one status to another.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "description": "Status of this condition; is it currently True, False, or Unknown?",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "Type of this condition. At most one of each condition type may apply to\na resource at any point in time.",
+                      "type": "string"
+                    }
+                  }
+                },
+                "x-kubernetes-list-map-keys": [
+                  "type"
+                ],
+                "x-kubernetes-list-type": "map"
+              }
+            }
+          }
+        },
+        "x-kubernetes-group-version-kind": [
+          {
+            "group": "ec2.aws.m.upbound.io",
+            "kind": "SecurityGroup",
+            "version": "v1beta1"
+          }
+        ]
+      }
+    }
+  }
+}

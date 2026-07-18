@@ -1,0 +1,80 @@
+# Observed state for `crossplane render --observed-resources`, matching the
+# three availability zones in xr.yaml. A provider-assigned ID on the VPC lets
+# the subnet collection expand, and IDs on the subnets populate the subnetIDs
+# array in status.
+#
+# Supplying just the VPC is enough to demonstrate the guardrail: render
+# xr-exceed.yaml (six zones) with this file and the collection expands past the
+# --rgd-max-collection-size=5 limit, producing the fatal error.
+#
+# The VPC matches its node by the crossplane.io/composition-resource-name
+# annotation. Collection items carry the kro.run/collection-index label and are
+# matched to the "subnets" node by name prefix; their metadata.name must equal
+# the expanded name (${schema.metadata.name}-subnet-${az.suffix}).
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: VPC
+metadata:
+  name: cool-network-vpc
+  annotations:
+    crossplane.io/composition-resource-name: vpc
+  labels:
+    crossplane.io/composite: cool-network
+status:
+  atProvider:
+    id: vpc-0a1b2c3d4e5f67890
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  name: cool-network-subnet-a
+  annotations:
+    crossplane.io/composition-resource-name: subnets-cool-network-subnet-a
+  labels:
+    crossplane.io/composite: cool-network
+    kro.run/collection-index: "0"
+status:
+  atProvider:
+    id: subnet-0aaaaaaaaaaaaaaaa
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  name: cool-network-subnet-b
+  annotations:
+    crossplane.io/composition-resource-name: subnets-cool-network-subnet-b
+  labels:
+    crossplane.io/composite: cool-network
+    kro.run/collection-index: "1"
+status:
+  atProvider:
+    id: subnet-0bbbbbbbbbbbbbbbb
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
+---
+apiVersion: ec2.aws.m.upbound.io/v1beta1
+kind: Subnet
+metadata:
+  name: cool-network-subnet-c
+  annotations:
+    crossplane.io/composition-resource-name: subnets-cool-network-subnet-c
+  labels:
+    crossplane.io/composite: cool-network
+    kro.run/collection-index: "2"
+status:
+  atProvider:
+    id: subnet-0cccccccccccccccc
+  conditions:
+  - type: Ready
+    status: "True"
+    reason: Available
