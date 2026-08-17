@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 
@@ -2353,6 +2354,73 @@ func TestDecodeAsK8sAPI(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want, tc.in); diff != "" {
 				t.Errorf("%s\ndecodeAsK8sAPI(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestRequireSchemas(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		req    *fnv1.RunFunctionRequest
+		gvks   []schema.GroupVersionKind
+		want   *fnv1.Requirements
+	}{
+		"WithRequiredSchemasCapability": {
+			reason: "When Crossplane advertises required_schemas, request schemas directly by GVK instead of guessing a CRD name.",
+			req: &fnv1.RunFunctionRequest{
+				Meta: &fnv1.RequestMeta{Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+			},
+			gvks: []schema.GroupVersionKind{{Group: "eks.aws.m.upbound.io", Version: "v1beta1", Kind: "AccessEntry"}},
+			want: &fnv1.Requirements{
+				Schemas: map[string]*fnv1.SchemaSelector{
+					"eks.aws.m.upbound.io/v1beta1, Kind=AccessEntry": {
+						ApiVersion: "eks.aws.m.upbound.io/v1beta1",
+						Kind:       "AccessEntry",
+					},
+				},
+			},
+		},
+		"CRDFallbackUsesCorrectEnglishPlural": {
+			reason: "Without the required_schemas capability, the CRD requested via required_resources must be named with the real English plural (accessentries), not a naive Kind+\"s\" guess (accessentrys) that no CRD in the cluster actually has.",
+			req: &fnv1.RunFunctionRequest{
+				Meta: &fnv1.RequestMeta{Capabilities: []fnv1.Capability{}}, // an older Crossplane version won't advertise capabilities at all
+			},
+			gvks: []schema.GroupVersionKind{{Group: "eks.aws.m.upbound.io", Version: "v1beta1", Kind: "AccessEntry"}},
+			want: &fnv1.Requirements{
+				Resources: map[string]*fnv1.ResourceSelector{
+					"eks.aws.m.upbound.io/v1beta1, Kind=AccessEntry": {
+						ApiVersion: "apiextensions.k8s.io/v1",
+						Kind:       "CustomResourceDefinition",
+						Match:      &fnv1.ResourceSelector_MatchName{MatchName: "accessentries.eks.aws.m.upbound.io"},
+					},
+				},
+			},
+		},
+		"CRDFallbackRegularPlural": {
+			reason: "Kinds with a regular plural still resolve correctly through the fallback path.",
+			req: &fnv1.RunFunctionRequest{
+				Meta: &fnv1.RequestMeta{Capabilities: []fnv1.Capability{}},
+			},
+			gvks: []schema.GroupVersionKind{{Group: "s3.aws.upbound.io", Version: "v1beta1", Kind: "Bucket"}},
+			want: &fnv1.Requirements{
+				Resources: map[string]*fnv1.ResourceSelector{
+					"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+						ApiVersion: "apiextensions.k8s.io/v1",
+						Kind:       "CustomResourceDefinition",
+						Match:      &fnv1.ResourceSelector_MatchName{MatchName: "buckets.s3.aws.upbound.io"},
+					},
+				},
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rsp := &fnv1.RunFunctionResponse{Requirements: &fnv1.Requirements{}}
+			requireSchemas(tc.req, rsp, tc.gvks)
+			if diff := cmp.Diff(tc.want, rsp.GetRequirements(), protocmp.Transform()); diff != "" {
+				t.Errorf("%s\nrequireSchemas(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
 	}
