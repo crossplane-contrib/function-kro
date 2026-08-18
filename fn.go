@@ -7,6 +7,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/gobuffalo/flect"
 	"github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -295,7 +296,7 @@ func requireSchemas(req *fnv1.RunFunctionRequest, rsp *fnv1.RunFunctionResponse,
 			ApiVersion: "apiextensions.k8s.io/v1",
 			Kind:       "CustomResourceDefinition",
 			Match: &fnv1.ResourceSelector_MatchName{
-				MatchName: strings.ToLower(gvk.Kind + "s." + gvk.Group),
+				MatchName: strings.ToLower(flect.Pluralize(gvk.Kind) + "." + gvk.Group),
 			},
 		}
 	}
