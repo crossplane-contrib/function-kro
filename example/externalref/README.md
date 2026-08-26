@@ -34,3 +34,6 @@ carries the region, environment, and CIDR from the single ConfigMap, and
 computed across all subscriber ConfigMaps. The VPC renders with configuration
 sourced from the ConfigMap; the subnet and security group depend on the VPC's ID
 and reconcile on a cluster.
+
+To reference cluster-scoped resources, use label-selector.
+If `metadata.name` is set, kro will default to the instance namespace.
