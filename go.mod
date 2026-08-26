@@ -7,7 +7,7 @@ require (
 	github.com/crossplane/crossplane-runtime/v2 v2.3.3
 	github.com/crossplane/function-sdk-go v0.7.1
 	github.com/gobuffalo/flect v1.0.3
-	github.com/google/cel-go v0.29.2
+	github.com/google/cel-go v0.32.0
 	github.com/google/go-cmp v0.7.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kubernetes-sigs/kro v0.9.2
