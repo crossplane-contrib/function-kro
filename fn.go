@@ -101,16 +101,35 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	// Build the context schema from context.
+	var contextSchema *spec.Schema
+	if rg.Context != nil && rg.Context.OpenAPIV3Schema != nil {
+		raw, err := json.Marshal(rg.Context.OpenAPIV3Schema)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot marshal context schema from function input")
+		}
+		props := spec.SchemaProps{}
+		if err := json.Unmarshal(raw, &props); err != nil {
+			return nil, errors.Wrap(err, "cannot unmarshal context schema from function input")
+		}
+		contextSchema = &spec.Schema{SchemaProps: props}
+	}
+
 	// Build the KRO graph using the schema resolver.
 	gb := graph.NewBuilder(resolver)
-	g, err := gb.NewResourceGraphDefinition(rg, xrSchema, f.rgdConfig)
+	g, err := gb.NewResourceGraphDefinition(rg, xrSchema, contextSchema, f.rgdConfig)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph"))
 		return rsp, nil
 	}
 
 	// Create the KRO runtime from the graph and XR
-	rt, err := runtime.FromGraph(g, &oxr.Resource.Unstructured, f.rgdConfig)
+	c := &unstructured.Unstructured{}
+	if err := resource.AsObject(req.GetContext(), c); err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot create context object"))
+		return rsp, nil
+	}
+	rt, err := runtime.FromGraph(g, &oxr.Resource.Unstructured, c, f.rgdConfig)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create graph runtime"))
 		return rsp, nil

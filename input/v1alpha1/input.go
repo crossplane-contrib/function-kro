@@ -6,6 +6,7 @@ package v1alpha1
 
 import (
 	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -28,4 +29,14 @@ type ResourceGraph struct {
 	// The resources that are part of the ResourceGraph.
 	// +kubebuilder:validation:Optional
 	Resources []*v1alpha1.Resource `json:"resources,omitempty"`
+
+	// The context specification.
+	// +kubebuilder:validation:Optional
+	Context *Context `json:"context,omitempty"`
+}
+
+type Context struct {
+	// The OpenAPIV3Schema of the composition context.
+	// +kubebuilder:validation:Optional
+	OpenAPIV3Schema map[string]extv1.JSON `json:"openAPIV3Schema,omitempty"`
 }

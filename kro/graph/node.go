@@ -27,9 +27,14 @@ import (
 const (
 	// SchemaVarName is the variable name for accessing instance spec in CEL.
 	SchemaVarName = "schema"
+	// ContextSchemaVarName is the variable name for accessing context in CEL.
+	ContextSchemaVarName = "context"
 	// InstanceNodeID is the ID of the instance node (same as SchemaVarName since
 	// that's how it's accessed in CEL expressions).
 	InstanceNodeID = SchemaVarName
+	// InstanceNodeID is the ID of the context node (same as SchemaVarName since
+	// that's how it's accessed in CEL expressions).
+	ContextNodeID = ContextSchemaVarName
 	// EachVarName is the variable name for collection item iteration in CEL.
 	EachVarName = "each"
 )
