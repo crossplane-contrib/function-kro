@@ -1,0 +1,11 @@
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-kro
+  annotations:
+    # Connect crossplane render to a function-kro instance running locally.
+    render.crossplane.io/runtime: Development
+spec:
+  # Ignored when using the Development runtime.
+  package: function-kro
