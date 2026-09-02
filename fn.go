@@ -32,6 +32,7 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
+	"github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/graph"
 	schemaresolver "github.com/crossplane-contrib/function-kro/kro/graph/schema/resolver"
 	"github.com/crossplane-contrib/function-kro/kro/metadata"
@@ -102,6 +103,21 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	// Add context as a dynamic CEL map on the XR schema.
+	xrSchema.Properties["context"] = spec.Schema{
+		SchemaProps: spec.SchemaProps{
+			Type: []string{"object"},
+			AdditionalProperties: &spec.SchemaOrBool{
+				Schema: &spec.Schema{
+					SchemaProps: spec.SchemaProps{Nullable: true},
+					VendorExtensible: spec.VendorExtensible{
+						Extensions: spec.Extensions{cel.XKubernetesPreserveUnknownFields: true},
+					},
+				},
+			},
+		},
+	}
+
 	// Build the KRO graph using the schema resolver.
 	gb := graph.NewBuilder(resolver)
 	g, err := gb.NewResourceGraphDefinition(rg, xrSchema, f.rgdConfig)
@@ -110,8 +126,21 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
+	// Load the context from req and apply to a copy of the XR.
+	fnContext := &unstructured.Unstructured{}
+	if err := resource.AsObject(req.GetContext(), fnContext); err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot create context object"))
+		return rsp, nil
+	}
+	if err := decodeAsK8sAPI(fnContext); err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot decode context object"))
+		return rsp, nil
+	}
+	xrc := oxr.Resource.Unstructured.DeepCopy()
+	xrc.Object["context"] = fnContext.Object
+
 	// Create the KRO runtime from the graph and XR
-	rt, err := runtime.FromGraph(g, &oxr.Resource.Unstructured, f.rgdConfig)
+	rt, err := runtime.FromGraph(g, xrc, f.rgdConfig)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create graph runtime"))
 		return rsp, nil
