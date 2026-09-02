@@ -235,7 +235,7 @@ func TestFromGraph(t *testing.T) {
 				origIncludeLen = len(node.IncludeWhen)
 			}
 
-			rt, err := FromGraph(tt.graph, tt.instance, graph.RGDConfig{MaxCollectionSize: 1000})
+			rt, err := FromGraph(tt.graph, tt.instance, nil, graph.RGDConfig{MaxCollectionSize: 1000})
 			require.NoError(t, err)
 
 			tt.validate(t, rt)
@@ -275,7 +275,7 @@ func TestFromGraph_InstanceWithDependencies(t *testing.T) {
 		},
 	}
 
-	rt, err := FromGraph(g, testInstance("test"), graph.RGDConfig{MaxCollectionSize: 1000})
+	rt, err := FromGraph(g, testInstance("test"), nil, graph.RGDConfig{MaxCollectionSize: 1000})
 	require.NoError(t, err)
 
 	inst := rt.Instance()

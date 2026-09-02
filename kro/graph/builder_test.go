@@ -790,7 +790,7 @@ func TestGraphBuilder_Validation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-group", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1345,7 +1345,7 @@ func TestGraphBuilder_DependencyValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("testrgd", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1668,7 +1668,7 @@ func TestGraphBuilder_ExpressionParsing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("testrgd", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 			require.NoError(t, err)
 			if tt.validateVars != nil {
 				tt.validateVars(t, g)
@@ -2129,7 +2129,7 @@ func TestGraphBuilder_CELTypeChecking(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-cel-types", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -2474,7 +2474,7 @@ func TestGraphBuilder_StructuralTypeCompatibility(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("testrgd", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 			if tt.wantErr {
 				if !assert.Error(t, err) {
 					t.Logf("Expected error but got nil")
@@ -2876,7 +2876,7 @@ func TestGraphBuilder_ForEachParsing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("testrgd", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.errMsg != "" {
@@ -3092,7 +3092,7 @@ func TestGraphBuilder_CollectionChaining(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-rgd", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -3250,7 +3250,7 @@ func TestGraphBuilder_IncludeWhenReferences(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-includewhen-refs", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			g, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -3513,7 +3513,7 @@ func TestGraphBuilder_CollectionValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rgd := generator.NewResourceGraphDefinition("test-rgd", tt.resourceGraphDefinitionOpts...)
 			xrSchema := generator.BuildTestXRSchema(rgd)
-			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+			graph, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 
 			if tt.wantErr {
 				require.Error(t, err)

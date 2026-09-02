@@ -77,7 +77,7 @@ func BenchmarkNewRGD_SimplePodAndConfig(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+		_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -127,7 +127,7 @@ func BenchmarkNewRGD_ManyPods(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+		_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -174,7 +174,7 @@ func BenchmarkNewRGD_WithCollections(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, defaultRGDConfig)
+		_, err := builder.NewResourceGraphDefinition(rgd, xrSchema, nil, defaultRGDConfig)
 		if err != nil {
 			b.Fatal(err)
 		}
