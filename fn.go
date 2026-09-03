@@ -101,7 +101,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// Build the context schema from context.
+	// Build the context schema.
 	var contextSchema *spec.Schema
 	if rg.Context != nil && rg.Context.OpenAPIV3Schema != nil {
 		raw, err := json.Marshal(rg.Context.OpenAPIV3Schema)
@@ -123,12 +123,13 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// Create the KRO runtime from the graph and XR
 	c := &unstructured.Unstructured{}
 	if err := resource.AsObject(req.GetContext(), c); err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create context object"))
 		return rsp, nil
 	}
+
+	// Create the KRO runtime from the graph, XR and context.
 	rt, err := runtime.FromGraph(g, &oxr.Resource.Unstructured, c, f.rgdConfig)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create graph runtime"))
