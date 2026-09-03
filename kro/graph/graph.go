@@ -30,6 +30,9 @@ type Graph struct {
 	// Instance is the instance node (the generated CRD instance).
 	Instance *Node
 
+	// Context is the context node.
+	Context *Node
+
 	// Nodes maps node ID to immutable node spec.
 	Nodes map[string]*Node
 

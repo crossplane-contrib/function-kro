@@ -86,7 +86,7 @@ type RGDConfig struct {
 // CRD. The ResourceGraphDefinition object is a fully processed and validated representation
 // of the resource graph definition CRD, it's underlying resources, and the relationships between
 // the resources.
-func (b *Builder) NewResourceGraphDefinition(rg *input.ResourceGraph, xrSchema *spec.Schema, rgdConfig RGDConfig) (*Graph, error) {
+func (b *Builder) NewResourceGraphDefinition(rg *input.ResourceGraph, xrSchema *spec.Schema, contextSchema *spec.Schema, rgdConfig RGDConfig) (*Graph, error) {
 	// Before anything else, let's copy the resource graph to avoid modifying the
 	// original object.
 	rgd := rg.DeepCopy()
@@ -164,7 +164,7 @@ func (b *Builder) NewResourceGraphDefinition(rg *input.ResourceGraph, xrSchema *
 	// This uses a lightweight env that only declares identifier names (no full schemas) -
 	// sufficient for parsing and finding references, but NOT for type-checking or compilation.
 	nodeNames := maps.Keys(nodes)
-	allIdentifiers := append(nodeNames, SchemaVarName, EachVarName)
+	allIdentifiers := append(nodeNames, SchemaVarName, ContextSchemaVarName, EachVarName)
 	inspectorEnv, err := krocel.DefaultEnvironment(krocel.WithResourceIDs(allIdentifiers))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create inspector environment: %w", err)
@@ -219,6 +219,15 @@ func (b *Builder) NewResourceGraphDefinition(rg *input.ResourceGraph, xrSchema *
 		return nil, fmt.Errorf("failed to create typed CEL environment: %w", err)
 	}
 
+	// Support map-style indexing as context keys often can contain non-valid CEL
+	// identifiers such as "apiextensions.crossplane.io/environment".
+	if contextSchema != nil {
+		typedEnv, err = typedEnv.Extend(cel.Variable(ContextSchemaVarName, cel.MapType(cel.StringType, cel.DynType)))
+		if err != nil {
+			return nil, fmt.Errorf("failed to extend typed CEL environment with context: %w", err)
+		}
+	}
+
 	// Build context memoizes per-build CEL artifacts (checked ASTs, DeclTypes,
 	// extended environments) to avoid redundant computation within this build.
 	bc := &buildContext{
@@ -252,10 +261,19 @@ func (b *Builder) NewResourceGraphDefinition(rg *input.ResourceGraph, xrSchema *
 		resourceSchemas[id] = sch
 	}
 	resourceSchemas[InstanceNodeID] = schemaWithoutStatus
+	resourceSchemas[ContextNodeID] = contextSchema
+
+	context := &Node{
+		Meta: NodeMeta{
+			ID:   ContextNodeID,
+			Type: NodeTypeExternal,
+		},
+	}
 
 	resourceGraphDefinition := &Graph{
 		DAG:              dag,
 		Instance:         instance,
+		Context:          context,
 		Nodes:            nodes,
 		Resources:        nodes,
 		TopologicalOrder: topologicalOrder,
@@ -718,8 +736,9 @@ func extractDependencies(inspector *ast.Inspector, expr *krocel.Expression, iter
 	}
 
 	for _, resource := range inspectionResult.ResourceDependencies {
-		// SchemaVarName is the instance spec, not a resource dependency
-		if resource.ID == SchemaVarName {
+		// SchemaVarName is the instance spec, ContextSchemaVarName the context,
+		// not resource dependencies
+		if resource.ID == SchemaVarName || resource.ID == ContextSchemaVarName {
 			continue
 		}
 		// Everything else is a resource dependency

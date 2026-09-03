@@ -43,12 +43,13 @@ type Runtime struct {
 	order     []string
 	nodes     map[string]*Node
 	instance  *Node
+	context   *Node
 	rgdConfig graph.RGDConfig
 }
 
 // FromGraph creates a new Runtime from a Graph and instance.
 // This is called at the start of each reconciliation.
-func FromGraph(g *graph.Graph, instance *unstructured.Unstructured, rgdConfig graph.RGDConfig) (*Runtime, error) {
+func FromGraph(g *graph.Graph, instance *unstructured.Unstructured, context *unstructured.Unstructured, rgdConfig graph.RGDConfig) (*Runtime, error) {
 	startTime := time.Now()
 	defer func() {
 		duration := time.Since(startTime)
@@ -101,6 +102,18 @@ func FromGraph(g *graph.Graph, instance *unstructured.Unstructured, rgdConfig gr
 		}
 	}
 
+	// Create context node.
+	ctxNode := &Node{
+		Spec:           g.Context.DeepCopy(),
+		deps:           make(map[string]*Node),
+		rgdConfig:      rgdConfig,
+		resourceSchema: g.ResourceSchemas[graph.ContextNodeID],
+	}
+	if context != nil {
+		ctxNode.SetObserved([]*unstructured.Unstructured{context.DeepCopy()})
+	}
+	rt.context = ctxNode
+
 	// Create instance node.
 	instNode := &Node{
 		Spec:           g.Instance.DeepCopy(),
@@ -112,10 +125,12 @@ func FromGraph(g *graph.Graph, instance *unstructured.Unstructured, rgdConfig gr
 	rt.instance = instNode
 
 	// Phase 2: Wire up dependencies for each node.
-	// Inject instance node as "schema" dep for static expression evaluation.
+	// Inject instance node as "schema" and context node as "context" dep for
+	// static expression evaluation.
 	for _, id := range rt.order {
 		node := rt.nodes[id]
 		node.deps[graph.InstanceNodeID] = instNode
+		node.deps[graph.ContextNodeID] = ctxNode
 		for _, depID := range node.Spec.Meta.Dependencies {
 			if dep, ok := rt.nodes[depID]; ok {
 				node.deps[depID] = dep
