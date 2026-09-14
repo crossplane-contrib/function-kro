@@ -2089,7 +2089,7 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
-		"Context": {
+		"ContextInMR": {
 			reason: "Context data may be used in MR",
 			args: args{
 				req: &fnv1.RunFunctionRequest{
@@ -2105,29 +2105,6 @@ func TestRunFunction(t *testing.T) {
 					Input: resource.MustStructJSON(`{
 						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
-						"context": {
-							"openAPIV3Schema": {
-								"type": "object",
-								"properties": {
-									"apiextensions.crossplane.io/environment": {
-										"type": "object",
-										"properties": {
-											"region": {
-												"type": "string"
-											}
-										}
-									},
-									"custom": {
-										"type": "object",
-										"properties": {
-											"foo": {
-												"type": "string"
-											}
-										}
-									}
-								}
-							}
-						},
 						"resources": [{
 							"id": "bucket",
 							"template": {
@@ -2135,12 +2112,12 @@ func TestRunFunction(t *testing.T) {
 								"kind": "Bucket",
 								"metadata": {
 									"labels": {
-										"foo": "${context.custom.foo}"
+										"foo": "${schema.context.custom.foo}"
 									}
 								},
 								"spec": {
 									"forProvider": {
-										"region": "${context[\"apiextensions.crossplane.io/environment\"].region}"
+										"region": "${schema.context[\"apiextensions.crossplane.io/environment\"].region}"
 									}
 								}
 							}
@@ -2152,7 +2129,7 @@ func TestRunFunction(t *testing.T) {
 								"apiVersion": "example.crossplane.io/v1",
 								"kind": "XBucket",
 								"metadata": {"name": "test-bucket"},
-								"spec": {"bucketName": "my-bucket"}
+								"spec": {"bucketName": "my-bucket", "replicas": 3}
 							}`),
 						},
 					},
@@ -2194,6 +2171,8 @@ func TestRunFunction(t *testing.T) {
 						},
 						Resources: map[string]*fnv1.Resource{
 							"bucket": {
+								// The integer from schema.spec.replicas should land successfully in
+								// the rendered template as a number.
 								Resource: resource.MustStructJSON(`{
 									"apiVersion": "s3.aws.upbound.io/v1beta1",
 									"kind": "Bucket",
@@ -2211,6 +2190,50 @@ func TestRunFunction(t *testing.T) {
 							},
 						},
 					},
+				},
+			},
+		},
+		"NoContextFieldInXR": {
+			reason: "XR cannot have context field",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": []
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"context": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  "XR with top level context field is not supported",
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
 				},
 			},
 		},

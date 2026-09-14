@@ -32,6 +32,7 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 
 	input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
+	"github.com/crossplane-contrib/function-kro/kro/cel"
 	"github.com/crossplane-contrib/function-kro/kro/graph"
 	schemaresolver "github.com/crossplane-contrib/function-kro/kro/graph/schema/resolver"
 	"github.com/crossplane-contrib/function-kro/kro/metadata"
@@ -102,36 +103,47 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// Build the context schema.
-	var contextSchema *spec.Schema
-	if rg.Context != nil && rg.Context.OpenAPIV3Schema != nil {
-		raw, err := json.Marshal(rg.Context.OpenAPIV3Schema)
-		if err != nil {
-			return nil, errors.Wrap(err, "cannot marshal context schema from function input")
-		}
-		props := spec.SchemaProps{}
-		if err := json.Unmarshal(raw, &props); err != nil {
-			return nil, errors.Wrap(err, "cannot unmarshal context schema from function input")
-		}
-		contextSchema = &spec.Schema{SchemaProps: props}
+	// Add context as a dynamic CEL map on the XR schema.
+	xrSchema.Properties["context"] = spec.Schema{
+		SchemaProps: spec.SchemaProps{
+			Type: []string{"object"},
+			AdditionalProperties: &spec.SchemaOrBool{
+				Schema: &spec.Schema{
+					VendorExtensible: spec.VendorExtensible{
+						Extensions: spec.Extensions{cel.XKubernetesPreserveUnknownFields: true},
+					},
+				},
+			},
+		},
 	}
 
 	// Build the KRO graph using the schema resolver.
 	gb := graph.NewBuilder(resolver)
-	g, err := gb.NewResourceGraphDefinition(rg, xrSchema, contextSchema, f.rgdConfig)
+	g, err := gb.NewResourceGraphDefinition(rg, xrSchema, f.rgdConfig)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph"))
 		return rsp, nil
 	}
 
-	c := &unstructured.Unstructured{}
-	if err := resource.AsObject(req.GetContext(), c); err != nil {
+	// Load the context from req and apply to a copy of the XR.
+	context := &unstructured.Unstructured{}
+	if err := resource.AsObject(req.GetContext(), context); err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create context object"))
 		return rsp, nil
 	}
+	if err := decodeAsK8sAPI(context); err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot decode context object"))
+		return rsp, nil
+	}
+	if _, ok := oxr.Resource.Unstructured.Object["context"]; ok {
+		response.Fatal(rsp, errors.New("XR with top level context field is not supported"))
+		return rsp, nil
+	}
+	xrc := oxr.Resource.Unstructured.DeepCopy()
+	xrc.Object["context"] = context.Object
 
-	// Create the KRO runtime from the graph, XR and context.
-	rt, err := runtime.FromGraph(g, &oxr.Resource.Unstructured, c, f.rgdConfig)
+	// Create the KRO runtime from the graph and XR
+	rt, err := runtime.FromGraph(g, xrc, f.rgdConfig)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create graph runtime"))
 		return rsp, nil
