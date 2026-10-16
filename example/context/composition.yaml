@@ -1,0 +1,32 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: coolconfigmap-context
+spec:
+  compositeTypeRef:
+    apiVersion: context.example.crossplane.io/v1
+    kind: CoolConfigmap
+  mode: Pipeline
+  pipeline:
+  - step: kro-run
+    functionRef:
+      name: function-kro
+    input:
+      apiVersion: kro.fn.crossplane.io/v1alpha1
+      kind: ResourceGraph
+      resources:
+      # ConfigMap is always ready.
+      - id: configmap
+        readyWhen:
+          - ${true}
+        template:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata: {}
+          data:
+            foo: ${schema.context["apiextensions.crossplane.io/environment"].foo}
+
+# note there is no step with function-auto-ready in this pipeline because we are
+# exclusively using readyWhen statements for each resource. Crossplane will
+# detect that the parent XR is ready when all composed resources have their
+# ready state set to true in the function pipeline via the readyWhen statements.
