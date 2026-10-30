@@ -164,6 +164,18 @@ func TestDefaultEnvironment_KubernetesLibraries(t *testing.T) {
 			name: "quantity library",
 			expr: `quantity("500Mi").isLessThan(quantity("1Gi"))`,
 		},
+		{
+			name: "ip library",
+			expr: `ip("10.0.0.1").family() == 4`,
+		},
+		{
+			name: "cidr library",
+			expr: `cidr("10.0.0.0/8").containsIP(ip("10.0.0.1"))`,
+		},
+		{
+			name: "semver library",
+			expr: `semver("1.2.3").isLessThan(semver("1.3.0"))`,
+		},
 	}
 
 	for _, tc := range tests {
@@ -359,6 +371,9 @@ func Test_CELEnvHasFunction(t *testing.T) {
 		"random.seededString",
 		"json.unmarshal",
 		"json.marshal",
+		"hash.fnv64a",
+		"hash.sha256",
+		"hash.md5",
 	}
 	for _, fn := range expectedFns {
 		t.Run(fn, func(t *testing.T) {
