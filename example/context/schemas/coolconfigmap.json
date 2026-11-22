@@ -1,0 +1,60 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "context.example.crossplane.io",
+    "version": "v1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "io.crossplane.example.context.v1.CoolConfigmap": {
+        "type": "object",
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {}
+          },
+          "status": {
+            "type": "object"
+          },
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-kubernetes-group-version-kind": [
+          {
+            "group": "context.example.crossplane.io",
+            "version": "v1",
+            "kind": "CoolConfigmap"
+          }
+        ]
+      }
+    }
+  }
+}

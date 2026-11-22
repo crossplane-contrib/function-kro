@@ -90,6 +90,7 @@ that come with the platform:
 Expressions use `${...}` syntax within resource templates:
 
 - Reference the XR spec: `${schema.spec.region}`
+- Reference the function context: `${schema.context["apiextensions.crossplane.io/environment"].region}`
 - Reference other resources' observed state: `${vpc.status.atProvider.id}`
 - Execute logic inline: `${schema.spec.replicas * 2}`, `arn:aws:s3:::${bucket.status.atProvider.id}`
 

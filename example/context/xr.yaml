@@ -1,0 +1,5 @@
+apiVersion: context.example.crossplane.io/v1
+kind: CoolConfigmap
+metadata:
+  name: cool-configmap
+spec: {}
