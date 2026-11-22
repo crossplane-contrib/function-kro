@@ -3,7 +3,7 @@ kind: CompositeResourceDefinition
 metadata:
   name: coolconfigmaps.context.example.crossplane.io
 spec:
-  group: core.example.crossplane.io
+  group: context.example.crossplane.io
   names:
     kind: CoolConfigmap
     plural: coolconfigmaps
