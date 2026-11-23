@@ -1,0 +1,9 @@
+# Platform-wide defaults that every app in this environment shares.
+apiVersion: apiextensions.crossplane.io/v1beta1
+kind: EnvironmentConfig
+metadata:
+  name: platform-defaults
+data:
+  environment: production
+  logLevel: info
+  replicas: 2

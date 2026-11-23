@@ -39,7 +39,9 @@ Crossplane RunFunctionRequest
 │  1. Parse ResourceGraph input                                    │
 │  2. Request schemas (requireSchemas → buildResolver)             │
 │  3. Build resource graph (graph.NewBuilder → NewResourceGraphDef)│
+│     - XR schema gets a `context` property for schema.context     │
 │  4. Create runtime (runtime.FromGraph)                           │
+│     - From a copy of the XR with the function context set        │
 │  5. Process external refs:                                       │
 │     - Resolve identity (GetDesiredIdentity with CEL)             │
 │     - Request from Crossplane, inject as observed state          │
@@ -120,7 +122,7 @@ function-kro/
 │   ├── v0.8.x_PATCHES.md   # Historical v0.8.x adaptation reference
 │   └── UPGRADE_PROCESS.md   # Process for upgrading from upstream KRO
 ├── package/                 # Crossplane package definition
-├── example/                 # Usage examples (basic, collections, conditionals, externalref, readiness, omit, core, app, collection-limits)
+├── example/                 # Usage examples (basic, collections, conditionals, externalref, readiness, omit, core, app, context, collection-limits)
 ├── scripts/                 # Build scripts (build-local.sh, diff-upstream-kro.sh)
 └── Dockerfile               # Production build
 ```
@@ -166,6 +168,7 @@ See `kro/graph/node.go` for type definitions, `kro/runtime/node.go` for evaluati
 CEL expressions use `${...}` syntax within templates:
 
 - **Static**: Reference only the XR spec: `${schema.spec.region}`
+- **Context**: Read the function context an earlier pipeline step wrote: `${schema.context["apiextensions.crossplane.io/environment"].region}`. Keys containing dots or slashes need bracket syntax. Context is read-only.
 - **Dynamic**: Reference other resources: `${vpc.status.atProvider.id}`
 - **String templates**: Embedded in strings: `arn:aws:s3:::${bucket.status.atProvider.id}`
 - **Standalone**: Single expression for entire field value
@@ -342,6 +345,10 @@ The runtime returns only rendered template fields via `node.GetDesired()` (retur
 
 Supporting both `RequiredSchemas` and `RequiredCRDs` ensures compatibility with different Crossplane versions while preferring the more efficient schema-based approach.
 
+### Function Context
+
+`fn.go` exposes the function context as `schema.context` without changes to `kro/`. It adds a `context` property to the XR schema whose values preserve unknown fields and are nullable, then sets the context on a copy of the observed XR before calling `runtime.FromGraph()`. A template that reads through a context key whose whole value is null (`{"apiextensions.crossplane.io/environment": null}`) leaves its resource pending, but a null value nested under a key (`{"apiextensions.crossplane.io/environment": {"region": null}}`) renders as `null` into the composed resource. Writing to the context is not supported.
+
 ### Expression Caching
 
 The runtime deduplicates CEL expression evaluation via a shared `expressionsCache` in `runtime.FromGraph()`. Non-iteration expressions that appear in multiple nodes share the same `expressionEvaluationState`, so they're evaluated once and reused. Iteration expressions (forEach) are NOT cached because they need fresh evaluation with different iterator bindings per item.
@@ -352,7 +359,7 @@ The runtime deduplicates CEL expression evaluation via a shared `expressionsCach
 - `patches/v0.8.x_PATCHES.md` — Historical reference for KRO v0.8.x adaptations (superseded by v0.9.0)
 - `patches/UPGRADE_PROCESS.md` — Process for upgrading from upstream KRO releases
 - `spec-desired-ssa.md` — Original SSA design spec (references older API names; implementation evolved)
-- `example/README.md` — Working examples for all major features (basic, collections, conditionals, externalref, readiness, omit, core, app, collection-limits)
+- `example/README.md` — Working examples for all major features (basic, collections, conditionals, externalref, readiness, omit, core, app, context, collection-limits)
 
 ## Auditing Our Code Against Upstream KRO
 
