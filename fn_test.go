@@ -2089,8 +2089,8 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
-		"ContextInMR": {
-			reason: "Context data may be used in MR",
+		"ContextInComposedResource": {
+			reason: "Values read from the function context should resolve into a composed resource, and integers from the context should support CEL integer math",
 			args: args{
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
@@ -2102,6 +2102,9 @@ func TestRunFunction(t *testing.T) {
 							"replicas": 3
 						}
 					}`),
+					// The "+ 1" in the template is deliberate. Context numbers
+					// arrive as float64, and CEL can't add an int to one unless
+					// decodeAsK8sAPI has run on the context first.
 					Input: resource.MustStructJSON(`{
 						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
 						"kind": "ResourceGraph",
@@ -2187,8 +2190,8 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
-		"NullContextValue": {
-			reason: "Templated value from context is null",
+		"NullContextKeyNotComposed": {
+			reason: "A resource whose template reads through a context key that is null should not be composed",
 			args: args{
 				req: &fnv1.RunFunctionRequest{
 					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
@@ -2252,6 +2255,94 @@ func TestRunFunction(t *testing.T) {
 								"apiVersion": "example.crossplane.io/v1",
 								"kind": "XBucket"
 							}`),
+						},
+					},
+				},
+			},
+		},
+		"NestedNullContextValueComposed": {
+			reason: "A null value nested under a context key should render as null in the composed resource rather than holding the resource back",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Context: resource.MustStructJSON(`{
+						"apiextensions.crossplane.io/environment": {
+							"region": null
+						}
+					}`),
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "${schema.context[\"apiextensions.crossplane.io/environment\"].region}"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {"bucketName": "my-bucket", "replicas": 3}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Context: resource.MustStructJSON(`{
+						"apiextensions.crossplane.io/environment": {
+							"region": null
+						}
+					}`),
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": null
+										}
+									}
+								}`),
+							},
 						},
 					},
 				},

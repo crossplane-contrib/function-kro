@@ -103,7 +103,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// Add context as a dynamic CEL map on the XR schema.
+	// Expose the function context to CEL as schema.context. Context keys and
+	// values are whatever earlier pipeline steps wrote, so we can't type them.
+	// Values are nullable so a template that reads through a key whose value
+	// is null leaves its resource pending instead of failing evaluation.
 	xrSchema.Properties["context"] = spec.Schema{
 		SchemaProps: spec.SchemaProps{
 			Type: []string{"object"},
@@ -126,7 +129,9 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// Load the context from req and apply to a copy of the XR.
+	// The context isn't part of the XR, so we set it on a copy that only the
+	// runtime sees. It's decoded like the XR so integer math on context values
+	// works in CEL.
 	fnContext := &unstructured.Unstructured{}
 	if err := resource.AsObject(req.GetContext(), fnContext); err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create context object"))
