@@ -7,12 +7,20 @@
   "paths": {},
   "components": {
     "schemas": {
-      "io.crossplane.example.context.v1.CoolConfigmap": {
+      "io.crossplane.example.context.v1.App": {
         "type": "object",
         "properties": {
           "spec": {
             "type": "object",
-            "properties": {}
+            "properties": {
+              "image": {
+                "description": "The app's OCI container image.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "image"
+            ]
           },
           "status": {
             "type": "object"
@@ -51,7 +59,7 @@
           {
             "group": "context.example.crossplane.io",
             "version": "v1",
-            "kind": "CoolConfigmap"
+            "kind": "App"
           }
         ]
       }

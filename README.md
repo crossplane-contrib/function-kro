@@ -114,6 +114,7 @@ See the [`example/`](example/) directory for complete working examples:
 | [omit](example/omit/) | Conditional field removal using the `omit()` CEL function |
 | [core](example/core/) | Composing native Kubernetes resources such as a `Secret` |
 | [Kubernetes App](example/app/) | Composing a native `Deployment` and `Service`, similar to the Crossplane docs [getting started][get-started] guide |
+| [context](example/context/) | Reading values an earlier pipeline step wrote to the function context |
 | [collection-limits](example/collection-limits/) | Enforcing maximum collection size limits |
 
 See the [examples README](example/README.md) for setup instructions and walkthroughs.

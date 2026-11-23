@@ -1,5 +1,7 @@
 apiVersion: context.example.crossplane.io/v1
-kind: CoolConfigmap
+kind: App
 metadata:
-  name: cool-configmap
-spec: {}
+  namespace: default
+  name: my-app
+spec:
+  image: nginx

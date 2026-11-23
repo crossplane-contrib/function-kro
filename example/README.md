@@ -2,7 +2,7 @@
 
 These examples demonstrate the key capabilities of `function-kro`, from basic resource
 dependencies through conditional creation, readiness checks, external references,
-collections, field omission, core Kubernetes resources, composing a Kubernetes application, and collection size limits.
+collections, field omission, core Kubernetes resources, composing a Kubernetes application, reading the function context, and collection size limits.
 
 ## Pre-Requisites
 
@@ -415,6 +415,60 @@ kubectl get app.example.crossplane.io/my-app -o json | jq '.status | {replicas, 
 kubectl delete -f app/xr.yaml
 kubectl delete -f app/composition.yaml
 kubectl delete -f app/xrd.yaml
+```
+
+## Context Example
+
+This example demonstrates reading the function context from CEL. Platform teams
+often keep defaults that every app in an environment shares, such as the
+environment name, log level, and replica count, in an EnvironmentConfig. The
+first pipeline step, `function-environment-configs`, reads the
+`platform-defaults` EnvironmentConfig and writes its data to the context key
+`apiextensions.crossplane.io/environment`. The `kro-run` step then composes an
+app's Deployment and a ConfigMap of its settings from those values, for example
+`${schema.context["apiextensions.crossplane.io/environment"].replicas}`. Keys
+that contain dots or slashes need this bracket syntax.
+
+If the context key's whole value is null, the resources that read it are held
+back until the key has a value. A null value nested under the key, such as
+`logLevel: null`, is rendered as `null` into the composed resource.
+
+Create the `App` XRD and composition, and the `platform-defaults` EnvironmentConfig:
+```shell
+kubectl apply -f context/xrd.yaml
+kubectl apply -f context/composition.yaml
+kubectl apply -f context/environmentconfig.yaml
+```
+
+Create an `App` instance:
+```shell
+kubectl apply -f context/xr.yaml
+```
+
+Watch the `App` become ready once the Deployment and ConfigMap satisfy their
+`readyWhen` conditions:
+```shell
+crossplane resource trace -w app.context.example.crossplane.io/my-app
+```
+
+Confirm the Deployment runs the replica count from the EnvironmentConfig (`2`):
+```shell
+kubectl get deployment -l crossplane.io/composite=my-app -o json | jq '.items[0].spec.replicas'
+```
+
+Confirm the app's running containers see the environment name (`production`)
+and log level (`info`) from the EnvironmentConfig:
+```shell
+kubectl exec deploy/$(kubectl get deployment -l crossplane.io/composite=my-app -o jsonpath='{.items[0].metadata.name}') -- env | grep -E 'ENVIRONMENT|LOG_LEVEL'
+```
+
+### Clean-up
+
+```shell
+kubectl delete -f context/xr.yaml
+kubectl delete -f context/environmentconfig.yaml
+kubectl delete -f context/composition.yaml
+kubectl delete -f context/xrd.yaml
 ```
 
 ## Collection Limits Example

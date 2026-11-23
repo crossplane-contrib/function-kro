@@ -1,13 +1,13 @@
 apiVersion: apiextensions.crossplane.io/v2
 kind: CompositeResourceDefinition
 metadata:
-  name: coolconfigmaps.context.example.crossplane.io
+  name: apps.context.example.crossplane.io
 spec:
+  scope: Namespaced
   group: context.example.crossplane.io
   names:
-    kind: CoolConfigmap
-    plural: coolconfigmaps
-  scope: Namespaced
+    kind: App
+    plural: apps
   versions:
   - name: v1
     served: true
@@ -18,5 +18,11 @@ spec:
         properties:
           spec:
             type: object
+            properties:
+              image:
+                description: The app's OCI container image.
+                type: string
+            required:
+            - image
           status:
             type: object

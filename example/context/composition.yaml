@@ -1,13 +1,26 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: coolconfigmap-context
+  name: app-context
 spec:
   compositeTypeRef:
     apiVersion: context.example.crossplane.io/v1
-    kind: CoolConfigmap
+    kind: App
   mode: Pipeline
   pipeline:
+  # Write the EnvironmentConfig's data to the function context at
+  # apiextensions.crossplane.io/environment, where kro-run reads it.
+  - step: environment-configs
+    functionRef:
+      name: function-environment-configs
+    input:
+      apiVersion: environmentconfigs.fn.crossplane.io/v1beta1
+      kind: Input
+      spec:
+        environmentConfigs:
+        - type: Reference
+          ref:
+            name: platform-defaults
   - step: kro-run
     functionRef:
       name: function-kro
@@ -15,18 +28,46 @@ spec:
       apiVersion: kro.fn.crossplane.io/v1alpha1
       kind: ResourceGraph
       resources:
-      # ConfigMap is always ready.
-      - id: configmap
-        readyWhen:
-          - ${true}
+      # The app's settings, loaded into the container as environment variables.
+      - id: settings
         template:
           apiVersion: v1
           kind: ConfigMap
-          metadata: {}
+          metadata:
+            name: ${schema.metadata.name}-settings
           data:
-            foo: ${schema.context["apiextensions.crossplane.io/environment"].foo}
+            ENVIRONMENT: ${schema.context["apiextensions.crossplane.io/environment"].environment}
+            LOG_LEVEL: ${schema.context["apiextensions.crossplane.io/environment"].logLevel}
+        readyWhen:
+        - ${true}
+      - id: deployment
+        template:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            labels:
+              example.crossplane.io/app: ${schema.metadata.name}
+          spec:
+            replicas: ${schema.context["apiextensions.crossplane.io/environment"].replicas}
+            selector:
+              matchLabels:
+                example.crossplane.io/app: ${schema.metadata.name}
+            template:
+              metadata:
+                labels:
+                  example.crossplane.io/app: ${schema.metadata.name}
+              spec:
+                containers:
+                - name: app
+                  image: ${schema.spec.image}
+                  ports:
+                  - containerPort: 80
+                  envFrom:
+                  - configMapRef:
+                      name: ${schema.metadata.name}-settings
+        readyWhen:
+        - ${deployment.status.?conditions.orValue([]).exists(c, c.type == "Available" && c.status == "True")}
 
-# note there is no step with function-auto-ready in this pipeline because we are
-# exclusively using readyWhen statements for each resource. Crossplane will
-# detect that the parent XR is ready when all composed resources have their
-# ready state set to true in the function pipeline via the readyWhen statements.
+# This pipeline has no function-auto-ready step: each resource declares its own
+# readyWhen, so Crossplane marks the App ready once the ConfigMap and Deployment
+# satisfy those conditions.
