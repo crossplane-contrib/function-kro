@@ -31,7 +31,8 @@ crossplane render -r -x xr.yaml composition.yaml functions.yaml \
 Because the ConfigMaps are supplied, the status aggregates fully: `platformConfig`
 carries the region, environment, and CIDR from the single ConfigMap, and
 `notifications` reports `subscriberCount`, the sorted `teams`, and `hasOncall`
-computed across all subscriber ConfigMaps. The VPC renders with configuration
+computed across the subscriber ConfigMaps the selector matches, which leaves out
+the paused QA team. The VPC renders with configuration
 sourced from the ConfigMap; the subnet and security group depend on the VPC's ID
 and reconcile on a cluster.
 

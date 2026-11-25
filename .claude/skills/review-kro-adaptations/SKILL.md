@@ -144,7 +144,7 @@ After reviewing all files individually, assess these system-level concerns:
 
 - Are our adaptations tested? Not just "do tests exist" but "do tests verify the adaptation behavior specifically"?
 - Are there modifications that silently change behavior but have no corresponding test changes?
-- Run `go test -cover ./kro/...` and note coverage for modified packages.
+- Run `go test -coverpkg=./kro/... ./...` and note coverage for modified packages. The vendored packages have no tests of their own, so their coverage comes from the root package's tests.
 
 ### 4c. Error Surface
 

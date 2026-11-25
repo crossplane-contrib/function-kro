@@ -4,14 +4,16 @@ This document describes the process for upgrading function-kro to a new upstream
 
 ## Overview
 
-Function-KRO vendors code from upstream [kubernetes-sigs/kro](https://github.com/kubernetes-sigs/kro) with adaptations for running as a Crossplane composition function. When upstream KRO releases a new version, we need to:
+Function-KRO uses code from upstream [kubernetes-sigs/kro](https://github.com/kubernetes-sigs/kro) to run as a Crossplane composition function. Most of it is imported unmodified as the Go module `github.com/kubernetes-sigs/kro`. The upstream packages we have to change are vendored under `kro/` with adaptations. The "Vendoring Rules" section at the end of this document says when to vendor, and `v{CURRENT}_PATCHES.md` lists what we vendor today. When upstream KRO releases a new version, we need to:
 
 1. Understand what changed upstream
-2. Copy the new code
+2. Bump the module dependency and copy the new vendored code
 3. Re-apply our adaptations
 4. Validate everything works
 
-This applies to every upstream release, patch versions included. Do not size the job from the version number. Patch releases from upstream routinely contain feature work. The v0.9.0 to v0.9.3 range reworked the graph builder and the runtime, both of which we adapt, and added new CEL libraries and a conditions feature. The scope check in Phase 1 tells you how big the upgrade actually is.
+This applies to every upstream release, patch versions included. Do not size the job from the version number. Patch releases from upstream routinely contain feature work. The v0.9.0 to v0.9.3 range reworked the graph builder and the runtime, both of which we adapted at the time, and added new CEL libraries and a conditions feature. The scope check in Phase 1 tells you how big the upgrade actually is.
+
+Releases can also move the layers we depend on. v0.10.0 deleted `pkg/runtime`, which we vendored, and replaced it with `pkg/graphengine`. That upgrade shrank what we vendor from six packages to one, because the new engine takes the schema resolver and REST mapper we need to inject as dependencies. If the scope check shows upstream reorganized the packages we vendor or import, stop and work out how the layers fit together now before copying anything.
 
 ## Commit Strategy
 
@@ -36,6 +38,7 @@ The commits can be squashed into a single commit before merging if desired, but 
 ```
 patches/
 ├── UPGRADE_PROCESS.md           # This document
+├── UPSTREAM_DIFFERENCES.md      # Where function-kro behaves differently from upstream kro
 └── v{CURRENT}_PATCHES.md        # Adaptations for the current version (the only patches doc)
 ```
 
@@ -68,7 +71,7 @@ Run the diff script — this is the source of truth for what we've actually chan
 ./scripts/diff-upstream-kro.sh -s -r v{OLD}
 
 # Full diff of a specific file
-./scripts/diff-upstream-kro.sh -f graph/builder.go -r v{OLD}
+./scripts/diff-upstream-kro.sh -f graphengine/executor/simple.go -r v{OLD}
 ```
 
 Then verify the patches doc against the script output:
@@ -121,33 +124,39 @@ git -C /tmp/kro worktree add /tmp/kro-new v{NEW}
 
 ### Step 1.3: Scope Check
 
-Before reading any diffs, measure how much of the code we vendor actually moved.
+Before reading any diffs, measure how much of the code we depend on actually moved. That's the vendored packages, the module packages we call, and the upstream code our own code depends on (listed under "Our Code That Depends on Upstream Behavior" in the patches doc):
 
 ```bash
 git -C /tmp/kro diff --stat v{OLD}..v{NEW} -- \
-    pkg/graph pkg/cel pkg/runtime pkg/metadata pkg/testutil pkg/features
+    pkg/graphengine/executor pkg/graphengine/rgdadapter \
+    api/v1alpha1 pkg/graphengine/compiler pkg/graphengine/runtime \
+    pkg/graph/builder.go pkg/controller/instance/controller_graph_engine.go
 ```
 
 From that output, check:
 
-1. **Total size.** A handful of files and a few dozen lines means you can copy just the changed files instead of running the full Phase 2 remove-and-copy. Hundreds of lines across many files means run the full process.
+1. **Total size.** Changes under the vendored packages decide how much Phase 2 and 3 work there is. Changes to the module packages come along with the dependency bump, but read them for behavior changes that affect us.
 
-2. **Which files we modify are in the list.** Cross-reference against the "Files We Modify" table below. Those are where re-applying adaptations takes real thought. Everything else is a straight copy.
+2. **Which files we modify are in the list.** Cross-reference against the "Modified Files" table in `v{OLD}_PATCHES.md`. Those are where re-applying adaptations takes real thought. Everything else is a straight copy.
 
-3. **New cross-package imports.** Upstream may start importing a package we intentionally exclude, and the patches doc won't mention that gap because it didn't exist at v{OLD}. This lists the `pkg/` imports the vendored code has at v{NEW} but not at v{OLD}:
+3. **New API server calls in the vendored code.** Our vendored executor keeps upstream's `Client` field nil and reroutes the calls an RGD reaches. A new `s.Client` call on one of those paths would panic at runtime, and the patches doc won't mention it because it didn't exist at v{OLD}. List the `s.Client` calls at each version and look at any new ones:
 
    ```bash
-   imports() {
-       git -C /tmp/kro grep -h "kro/pkg/" "$1" -- \
-           pkg/graph pkg/cel pkg/runtime pkg/metadata pkg/testutil pkg/features \
-           | grep -o "kro/pkg/[a-z0-9/]*" | sort -u
-   }
-   comm -13 <(imports v{OLD}) <(imports v{NEW})
+   git -C /tmp/kro grep -n 's\.Client\.' v{OLD} -- pkg/graphengine/executor ':!*_test.go'
+   git -C /tmp/kro grep -n 's\.Client\.' v{NEW} -- pkg/graphengine/executor ':!*_test.go'
    ```
 
-   Compare that list against the "What We Vendor" allowlist. Anything outside it needs a decision in Phase 3: vendor the new package, or adapt the code that imports it. For example, the v0.9.0 to v0.9.3 range deleted the per-package `metrics.go` files we vendor and pointed the vendored code at `pkg/metrics` instead, a package our allowlist excludes.
+4. **Our code that depends on upstream behavior.** Diff the upstream code behind each row of the patches doc's "Our Code That Depends on Upstream Behavior" table between the two versions. None of it copies upstream, so the diff script can't see it.
 
-Record the current dependency skew too, since the `github.com/kubernetes-sigs/kro` pin in `go.mod` moves independently of the vendored code (see Step 5.2):
+5. **Upstream logic our additions repeat.** For each row of the patches doc's "Upstream Logic Our Additions Repeat" table, diff the named upstream function between the two versions. That code is in our local-only `crossplane.go` or in our own code outside `kro/`, so the diff script never compares it against the upstream code it copies. For example:
+
+   ```bash
+   fn='/^func (s \*Simple) prepareItem(/,/^}/p'
+   diff <(git -C /tmp/kro show v{OLD}:pkg/graphengine/executor/simple.go | sed -n "$fn") \
+        <(git -C /tmp/kro show v{NEW}:pkg/graphengine/executor/simple.go | sed -n "$fn")
+   ```
+
+Record the current dependency skew too. The vendored packages compile against the module packages at the version pinned in `go.mod`, so the pin and the vendored code must always come from the same tag:
 
 ```bash
 grep "kubernetes-sigs/kro " go.mod
@@ -158,11 +167,9 @@ grep "kubernetes-sigs/kro " go.mod
 Have an AI agent (or manually) analyze the differences. This analysis is a **working document for the upgrade conversation only** — do NOT commit it to the repo (see Phase 5 for cleanup rules).
 
 ```bash
-# Compare the relevant directories
-diff -r /tmp/kro-old/pkg/graph /tmp/kro-new/pkg/graph
-diff -r /tmp/kro-old/pkg/cel /tmp/kro-new/pkg/cel
-diff -r /tmp/kro-old/pkg/runtime /tmp/kro-new/pkg/runtime
-diff -r /tmp/kro-old/pkg/metadata /tmp/kro-new/pkg/metadata
+# Compare the vendored package and the module packages we call
+diff -r /tmp/kro-old/pkg/graphengine /tmp/kro-new/pkg/graphengine
+diff -r /tmp/kro-old/api/v1alpha1 /tmp/kro-new/api/v1alpha1
 ```
 
 **The analysis document should include:**
@@ -184,61 +191,56 @@ Context:
 
 Generate a document covering:
 1. Summary of changes with impact assessment for function-kro
-2. New types/functions introduced in pkg/graph/, pkg/cel/, pkg/runtime/
-3. Changed function signatures (especially constructors)
+2. New types/functions introduced in pkg/graphengine/ and api/v1alpha1/
+3. Changed function signatures (especially constructors and options)
 4. Removed types/functions
 5. Dependency version changes
 
 Focus on changes that affect:
-- graph.Builder and NewResourceGraphDefinition
-- Runtime creation and resource rendering
-- CEL environment and expression evaluation
-- Schema resolution interfaces
+- The executor's Apply loop and how it handles each node kind
+- rgdadapter.BuildRuntimeForInstance and its compile and runtime options
+- Compiler extension points (schema resolver, REST mapper, node options)
+- Runtime node evaluation, readiness and scope publishing
 ```
 
 ---
 
 ## Phase 2: Copy New Files
 
-**Goal:** Replace vendored KRO code with the new version.
+**Goal:** Replace vendored KRO code with the new version, and move the module dependency to the same version.
 
 ### Step 2.1: Remove Old Files
 
+Remove only the upstream files in each vendored package. Our own files in those packages stay put, and the copy below won't touch them because upstream has no file by that name.
+
 ```bash
-# Remove existing vendored code (but preserve our additions)
-rm -rf kro/graph/dag/
-rm -rf kro/graph/parser/
-rm -rf kro/graph/fieldpath/
-rm -rf kro/graph/crd/
-rm -rf kro/graph/variable/
-rm -rf kro/cel/
-rm -rf kro/runtime/
-rm -rf kro/metadata/
-rm -rf kro/testutil/
-rm -rf kro/features/
+# Remove existing vendored upstream files (see the allowlist and file tables
+# in v{OLD}_PATCHES.md)
+rm -f kro/graphengine/executor/executor.go
+rm -f kro/graphengine/executor/simple.go
 
 # Keep these files (our additions):
-# - kro/graph/schema/resolver/schema_map_resolver.go
-# - kro/graph/schema/resolver/crd_resolver.go
-# - kro/graph/schema/resolver/combined_resolver.go
-# - kro/graph/schema/resolver/resolver.go (will need merge)
-# - kro/graph/schema/schema.go (will need merge)
+# - kro/graphengine/executor/crossplane.go
 ```
 
-### Step 2.2: Copy New Files
+### Step 2.2: Copy New Files and Bump the Module
 
 ```bash
-# Copy from upstream (see "What We Vendor" allowlist below)
-cp -r /tmp/kro-new/pkg/graph/* kro/graph/
-cp -r /tmp/kro-new/pkg/cel/* kro/cel/
-cp -r /tmp/kro-new/pkg/runtime/* kro/runtime/
-cp -r /tmp/kro-new/pkg/metadata/* kro/metadata/
-cp -r /tmp/kro-new/pkg/testutil/* kro/testutil/
-cp -r /tmp/kro-new/pkg/features/* kro/features/
+# Copy from upstream (see the allowlist in v{OLD}_PATCHES.md). We vendor
+# non-test files only.
+for pkg in graphengine/executor; do
+    find /tmp/kro-new/pkg/$pkg -maxdepth 1 -name '*.go' ! -name '*_test.go' \
+        -exec cp {} kro/$pkg/ \;
+done
+
+# The vendored code compiles against the module packages, so they must come
+# from the same tag.
+go get github.com/kubernetes-sigs/kro@v{NEW}
+go mod tidy
 ```
 
 **IMPORTANT: Always copy upstream files verbatim first.** Never write vendored files
-from scratch — always start from upstream's version, then modify. Writing files fresh
+from scratch; always start from upstream's version, then modify. Writing files fresh
 risks introducing formatting divergence, missing code, and unnecessary diff noise
 against upstream. The copy-then-modify approach ensures our diffs show only the
 intentional adaptations.
@@ -250,8 +252,9 @@ git add -A
 git commit -m "$(cat <<'EOF'
 chore(upgrade): copy upstream KRO v{NEW} files
 
-Raw copy of upstream KRO v{NEW} packages before any modifications.
-Import paths still reference upstream github.com/kubernetes-sigs/kro/pkg/.
+Raw copy of the upstream KRO v{NEW} packages we vendor, before any
+modifications, and the github.com/kubernetes-sigs/kro module bumped to
+the same tag.
 
 This commit captures the unmodified upstream state for diff comparison.
 EOF
@@ -263,42 +266,28 @@ commits will show exactly what we modified.
 
 ### Step 2.3: Fix Import Paths
 
-Upstream uses `github.com/kubernetes-sigs/kro/pkg/...` (or `sigs.k8s.io/kro/pkg/...` if they changed their module path) but we use `github.com/crossplane-contrib/function-kro/kro/...`:
+Vendored files import other upstream packages as `github.com/kubernetes-sigs/kro/pkg/...`. Leave those imports alone: they resolve to the module dependency, which is what we want for every package we don't vendor.
+
+Rewrite an import only when it points at another package we vendor, so the vendored files use our copy:
 
 ```bash
-# Update import paths in copied files (handle both possible upstream module paths)
-find kro/ -name "*.go" -exec sed -i '' \
-    's|github.com/kubernetes-sigs/kro/pkg/|github.com/crossplane-contrib/function-kro/kro/|g' {} \;
-find kro/ -name "*.go" -exec sed -i '' \
-    's|sigs.k8s.io/kro/pkg/|github.com/crossplane-contrib/function-kro/kro/|g' {} \;
-
-# IMPORTANT: Do NOT replace api/v1alpha1 imports with input/v1alpha1.
-# Types like Resource, ExternalRef, ForEachDimension, and KRODomainName are
-# imported directly from upstream (github.com/kubernetes-sigs/kro/api/v1alpha1).
-# Leave these imports as-is — they resolve to our go.mod dependency.
-#
-# Files that reference ResourceGraphDefinition (which becomes our ResourceGraph)
-# need a SECOND import added WITH AN ALIAS to avoid a package name collision:
-#   input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
-# Both packages are named "v1alpha1" in Go, so the alias is required.
-# Use input.ResourceGraph to reference our type.
-# This is handled during Phase 3 (Re-Apply Adaptations), not here.
-# The affected files are: graph/builder.go, graph/validation.go,
-# testutil/generator/resourcegraphdefinition.go.
+# Example, if we vendored pkg/graphengine/<pkg> and another vendored file imported it:
+#   sed -i 's|"github.com/kubernetes-sigs/kro/pkg/graphengine/<pkg>"|"github.com/crossplane-contrib/function-kro/kro/graphengine/<pkg>"|' kro/graphengine/*/*.go
 ```
 
+As of v0.10.0 we vendor only the executor, so there is nothing to rewrite.
+
 **COMMIT CHECKPOINT 2: Import paths fixed**
+
+Skip this commit if nothing changed.
 
 ```bash
 git add -A
 git commit -m "$(cat <<'EOF'
 chore(upgrade): fix import paths for function-kro
 
-Mechanical transformation of import paths:
-- github.com/kubernetes-sigs/kro/pkg/ → github.com/crossplane-contrib/function-kro/kro/
-
-api/v1alpha1 imports are left as-is — those types are imported directly
-from upstream as a Go dependency. No functional changes.
+Mechanical transformation of import paths between vendored packages.
+No functional changes.
 EOF
 )"
 ```
@@ -308,15 +297,15 @@ only the expected substitutions were made.
 
 ### Step 2.4: Restore Our Additions
 
-If our addition files were overwritten, restore them from git or re-create:
+Step 2.1 removes only upstream's files, so our additions should be untouched. If one was overwritten or deleted anyway, restore it from git:
 
 ```bash
-git checkout -- kro/graph/schema/resolver/schema_map_resolver.go
-git checkout -- kro/graph/schema/resolver/crd_resolver.go
-# Note: resolver.go and schema.go may need manual merge
+git checkout HEAD~1 -- kro/graphengine/executor/crossplane.go
 ```
 
 **COMMIT CHECKPOINT 3: Our additions restored**
+
+Skip this commit if nothing changed.
 
 ```bash
 git add -A
@@ -324,16 +313,12 @@ git commit -m "$(cat <<'EOF'
 chore(upgrade): restore function-kro custom files
 
 Restored files that are unique to function-kro (not from upstream):
-- kro/graph/schema/resolver/schema_map_resolver.go
-- kro/graph/schema/resolver/crd_resolver.go
-
-These files provide Crossplane-specific schema resolution.
+- kro/graphengine/executor/crossplane.go
 EOF
 )"
 ```
 
-This commit restores our custom files that may have been overwritten
-during the copy operation. The codebase likely won't compile yet.
+The codebase likely won't compile yet.
 
 ---
 
@@ -403,7 +388,9 @@ Context files:
 2. patches/v{OLD}_to_v{NEW}_CHANGES.md - What changed upstream
 3. patches/UPGRADE_PROCESS.md - Read the "Intelligent Merging" section carefully
 4. fn.go - Our Crossplane function entry point
-5. Current compilation errors from `go build`
+5. engine.go - How we prepare the input, REST mapper and schema resolver
+6. kro/graphengine/executor/crossplane.go - Our additions to the vendored executor
+7. Current compilation errors from `go build`
 
 IMPORTANT: Do NOT blindly paste old adaptation code into the new upstream.
 For EACH adaptation in v{OLD}_PATCHES.md:
@@ -414,17 +401,29 @@ For EACH adaptation in v{OLD}_PATCHES.md:
 5. Only then write the adaptation — tailored to the new code, not copied from the old
 
 The fundamental gaps we bridge (these are the WHYs):
-- No API server access: no REST mapper, no dynamic client, no CRD fetching
+- No API server access: no applies, reads, watches or deletes, no live REST
+  mapper, no CRD fetching
+- Crossplane owns composed resources: it applies them, fetches external
+  resources when asked, and deletes any resource the function stops returning
 - Schema from Crossplane: XR schema arrives as *spec.Schema, not via SimpleSchema
 - No CRD generation: Crossplane manages the XR CRD, not us
-- No namespace defaulting: Crossplane handles namespace assignment
+- Namespaces: Crossplane sets the namespace on the composed resources we return
 - Input type differences: our ResourceGraph vs upstream's ResourceGraphDefinition CR
 
 If upstream added extension points or restructured code to make any of these
-gaps smaller, prefer upstream's approach over our old adaptation.
+gaps smaller, prefer upstream's approach over our old adaptation. If that
+means a vendored package no longer needs any changes, stop vendoring it and
+import it as a module instead.
 
-If upstream added NEW code that has the same gaps (e.g., a new function that
-calls the REST mapper), that needs a NEW adaptation not in the old patches doc.
+If upstream added NEW code that has the same gaps (e.g., a new s.Client call
+on a path an RGD reaches), that needs a NEW adaptation not in the old patches
+doc.
+
+Then, for each row in the "Our Code That Depends on Upstream Behavior"
+table in v{OLD}_PATCHES.md, diff the upstream code it depends on between
+v{OLD} and v{NEW} and update ours if its assumptions changed. If a change
+would mean reproducing upstream logic, follow the "Vendoring Rules" section
+of UPGRADE_PROCESS.md.
 
 After applying adaptations:
 - Run `go generate ./...` to update generated methods and CRD schemas
@@ -433,6 +432,8 @@ After applying adaptations:
 ```
 
 #### Re-applying test adaptations
+
+We vendor no upstream tests as of v0.10.0, so this applies only if a vendored package brings its tests along again.
 
 Phase 2 overwrites the vendored `*_test.go` files along with everything else, and the diff script does not compare them, so the compiler is what surfaces this work: `go test ./...` fails to build the packages whose tests still expect the upstream API. `v{OLD}_PATCHES.md` lists which test files diverge and why.
 
@@ -459,10 +460,10 @@ git commit -m "$(cat <<'EOF'
 chore(upgrade): apply function-kro adaptations to v{NEW}
 
 Re-applied adaptations for Crossplane function compatibility:
-- Modified Builder constructor to accept resolver instead of clientConfig
-- Updated NewResourceGraphDefinition to accept schema parameter
-- Namespace scope inferred from template (no RESTMapper)
-- Injected ObjectMeta schema in resolution paths
+- Template nodes become desired composed resources instead of applies
+- The status patch node becomes the desired XR status
+- External refs read what Crossplane fetched
+- Existing resources are kept for nodes the executor can't process
 - [Add any new adaptations specific to this version]
 
 Build passes: yes
@@ -479,7 +480,7 @@ the previous commit reveals all our adaptations clearly.
 
 If upstream added features that function-kro should support (e.g., Collections/forEach):
 
-1. **Bump the `github.com/kubernetes-sigs/kro` dependency** to pick up new fields on `Resource`, `ExternalRef`, `ForEachDimension`, etc. automatically. Only update `input/v1alpha1/input.go` if the new fields affect `ResourceGraph` (our unique type).
+1. **New input fields come with the dependency bump** in Phase 2: new fields on `Resource`, `ExternalRef`, `ForEachDimension`, etc. arrive automatically. Only update `input/v1alpha1/input.go` if the new fields affect `ResourceGraph` (our unique type), then run `go generate ./...` to regenerate the input CRD.
 2. **Update fn.go** to handle new runtime behaviors
 3. **Add tests** for new functionality
 
@@ -557,19 +558,21 @@ Let the human handle manual testing and validation for now until we have more au
 - [ ] Update `patches/v{NEW}_PATCHES.md` with final adaptations
 - [ ] **Delete `patches/v{OLD}_PATCHES.md`** — superseded by the new patches doc
 - [ ] **Delete any `patches/v{OLD}_to_v{NEW}_CHANGES.md`** — this was a working doc for the upgrade, not a permanent artifact. Keeping it causes agents to treat pre-upgrade speculation as current truth.
-- [ ] Verify only `UPGRADE_PROCESS.md` and `v{NEW}_PATCHES.md` remain in `patches/`
-- [ ] Update every reference to the old baseline version. Renaming the patches doc breaks links elsewhere, so run `git grep -n "v{OLD}"` and fix each hit that refers to the current baseline. Leave historical examples alone, such as the version ranges cited earlier in this document. Expect at least `AGENTS.md` (the directory tree, the reference-documents list, and the `/audit-patches` baseline note) and the "Files We Modify" preamble in this document.
+- [ ] Update `patches/UPSTREAM_DIFFERENCES.md` for any difference from upstream kro the upgrade added or removed
+- [ ] Verify only `UPGRADE_PROCESS.md`, `UPSTREAM_DIFFERENCES.md` and `v{NEW}_PATCHES.md` remain in `patches/`
+- [ ] Update every reference to the old baseline version. Renaming the patches doc breaks links elsewhere, so run `git grep -n "v{OLD}"` and fix each hit that refers to the current baseline. Leave historical examples alone, such as the version ranges cited earlier in this document. Expect at least `AGENTS.md` (the directory tree, the reference-documents list, and the `/audit-patches` baseline note).
 - [ ] Update `AGENTS.md` if architecture changed significantly
 - [ ] Update `README.md` with new KRO version
 
 ### Step 5.2: Update Dependencies
 
-**Bump the `github.com/kubernetes-sigs/kro` pin to `v{NEW}` first.** We vendor most of upstream's `pkg/` tree but import the `api/v1alpha1` types (`Resource`, `ExternalRef`, `ForEachDimension`, `KRODomainName`) as an ordinary Go dependency. That pin and the vendored code are two independent references to the same upstream release, and nothing in the build complains when they disagree. Renovate bumps the pin on its own schedule, and an upgrade that only touches `kro/` leaves it behind, so the two drift silently in both directions. Bump it here so the vendored code and the API types come from the same tag.
+**Confirm the `github.com/kubernetes-sigs/kro` pin is `v{NEW}`.** Phase 2 bumps it alongside the copy. The vendored executor compiles against the module packages at that pin, so the pin and the vendored code must always come from the same tag. Renovate bumps the pin on its own schedule, so it can move ahead of the vendored code between upgrades. If it has, the build usually breaks, but not always.
 
 ```bash
-go get github.com/kubernetes-sigs/kro@v{NEW}
-go mod tidy
+grep "kubernetes-sigs/kro " go.mod
 ```
+
+kro is a single Go module, so its `go` directive becomes our minimum Go version. If it rose, bump `GO_VERSION` in `.github/workflows/ci.yml`. golangci-lint refuses to lint a module whose Go version is newer than the Go it was built with, so bump `GOLANGCI_VERSION` too if needed.
 
 Then check whether upstream's other dependency versions moved:
 
@@ -615,7 +618,8 @@ git reset --soft HEAD~6
 git commit -m "$(cat <<'EOF'
 chore(deps): bump KRO packages to v{NEW}
 
-Upgraded vendored KRO code from v{OLD} to v{NEW}.
+Upgraded KRO from v{OLD} to v{NEW}, both the vendored packages and the
+github.com/kubernetes-sigs/kro module.
 
 Changes:
 - Copied upstream KRO v{NEW} packages
@@ -633,68 +637,15 @@ the upgrade process. Squashing is optional and depends on team preference.
 
 ---
 
-## Quick Reference
+## Vendoring Rules
 
-### Files We Add (not in upstream)
+These rules hold for every upgrade. Which packages we vendor and import, and which files we modify, add and exclude, change from version to version, so they're listed in `v{CURRENT}_PATCHES.md` and checked by `/audit-patches`.
 
-| File | Purpose |
-|------|---------|
-| `kro/graph/schema/resolver/schema_map_resolver.go` | Resolve schemas from Crossplane's required_schemas |
-| `kro/graph/schema/resolver/crd_resolver.go` | Resolve schemas from CRDs (fallback path) |
-| `kro/graph/schema/resolver/combined_resolver.go` | Combined resolver factories pairing Crossplane schemas with core K8s types |
-
-### Files We Modify
-
-Based on the v0.9.0 audit, these are all non-test files we modify from upstream. The diff script skips `*_test.go`, so the vendored tests that track these APIs are listed separately in the patches doc:
-
-| File | Adaptation |
-|------|------------|
-| `kro/graph/builder.go` | Constructor accepts resolver; NewResourceGraphDefinition accepts schema; remove SimpleSchema/CRD gen; remove REST mapper |
-| `kro/graph/node.go` | Remove `GVR` and `Namespaced` from NodeMeta |
-| `kro/graph/validation.go` | API type adaptation; merge validation functions; always-namespaced assumption |
-| `kro/graph/schema/schema.go` | Add `DeepCopySchema` |
-| `kro/runtime/node.go` | Remove `normalizeNamespaces` call |
-| `kro/runtime/node_resolve.go` | Remove `normalizeNamespaces` method |
-| `kro/metadata/groupversion.go` | Remove `GetResourceGraphDefinitionInstanceGVR` |
-| `kro/testutil/generator/resourcegraphdefinition.go` | Adapted for our input types; added `BuildTestXRSchema` |
-
-### Files We Intentionally Exclude
-
-| Upstream File | Reason |
-|---------------|--------|
-| `graph/crd/*` (6 files) | CRD synthesis/compat — function-kro doesn't generate CRDs |
-| `graph/hash/*` | Revision hashing — function-kro doesn't track revisions |
-| `graph/revisions/*` (3 files) | Revision registry/resolver/metrics — controller-only infrastructure |
-| `metadata/owner_reference.go` | Owner reference helpers — Crossplane manages resource ownership |
-
-### What We Vendor (Allowlist)
-
-**Guiding principle:** Function-kro only vendors KRO's graph-building, CEL evaluation, and runtime execution layers. Everything else (controllers, API types, test utilities) is replaced by Crossplane's composition function framework.
-
-These are the **only** upstream `pkg/` packages we copy:
-
-| Upstream Path | Our Path | What It Provides |
-|---------------|----------|------------------|
-| `pkg/graph/` | `kro/graph/` | Graph building, DAG, parsing, schema resolution, validation |
-| `pkg/cel/` | `kro/cel/` | CEL environment, AST inspection, custom libraries, expression types |
-| `pkg/runtime/` | `kro/runtime/` | Runtime execution, template resolution |
-| `pkg/metadata/` | `kro/metadata/` | Labels, finalizers, GVK utilities |
-| `pkg/features/` | `kro/features/` | Feature gate definitions |
-| `pkg/testutil/` | `kro/testutil/` | Test helpers: generator, fake discovery/resolver |
-
-**IMPORTANT: If upstream introduces a new `pkg/` directory, do NOT copy it** unless it is a subdirectory of one of the packages above or you have explicitly evaluated that function-kro needs it. The default should be to skip unknown packages.
-
-Examples of upstream packages we skip (non-exhaustive):
-
-| Upstream Package | Why We Skip It |
-|------------------|----------------|
-| `api/` (or `apis/`) | We import `v1alpha1` types as a Go dependency, not vendored |
-| `pkg/controller/` | Replaced by Crossplane function framework (`fn.go`) |
-| `pkg/simpleschema/` | Crossplane provides OpenAPI schemas directly |
-| `pkg/dynamiccontroller/` | Replaced by Crossplane function framework |
-| `pkg/client/` | Kubernetes client utilities — no API access in functions |
-| `pkg/metrics/` | Controller metrics — not applicable |
-| `pkg/requeue/` | Controller requeue logic — not applicable |
+- Vendor an upstream package only when we have to change code inside it. Look for an upstream extension point first (an interface, an option, an injected dependency), and if one gets us what we need, import the package unmodified as the Go module `github.com/kubernetes-sigs/kro` instead. If a vendored package no longer needs any changes, stop vendoring it.
+- Any code that reproduces upstream logic lives in a vendored package, as a modification of the upstream file it reproduces, so the diff script shows it.
+- The one exception is a small piece of upstream logic we can't call directly. It may be repeated in a local-only `crossplane.go` in a vendored package, or, if it comes from a package we import rather than vendor, in our own code outside `kro/`. Either way the patches doc lists it under "Upstream Logic Our Additions Repeat" so upgrades carry upstream changes into it.
+- Anything more than a small piece is never repeated. Vendor the upstream package if we don't already, and change the upstream file.
+- Everything related to being a standalone Kubernetes controller is replaced by Crossplane's composition function framework.
 
 ---
 
