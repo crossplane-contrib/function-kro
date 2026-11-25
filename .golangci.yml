@@ -60,6 +60,7 @@ linters:
     # useful in theory to catch fields that are accidentally omitted. Seems like
     # it would have many more false positives than useful catches, though.
     - exhaustruct
+    - exhaustruct_v5
 
     # Warns about TODO comments. The rationale being they should be issues
     # instead. We're okay with using TODO to track minor cleanups for next time
@@ -95,6 +96,9 @@ linters:
     # against idiomatic Go programming, which encourages this approach - e.g.
     # to scope errors.
     - noinlineerr
+
+    # Deprecated in favour of gomodguard_v2, which is enabled by default: all
+    - gomodguard
   settings:
     depguard:
       rules:
@@ -156,6 +160,7 @@ linters:
           - containedctx
           - errcheck
           - forcetypeassert
+          - goconst
           - gochecknoglobals
           - gochecknoinits
           - gocognit

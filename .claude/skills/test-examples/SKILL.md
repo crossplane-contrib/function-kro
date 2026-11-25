@@ -121,13 +121,16 @@ If the example has interactive steps (kubectl patch, applying alternate files):
 
 ### 3.5 Clean Up
 
-Run the clean-up commands from the README's `### Clean-up` section for this example. Verify all managed resources are deleted before proceeding to the next example:
+Run the clean-up commands from the README's `### Clean-up` section for this example. The first block deletes the XR. Before running the next block (which deletes the composition and XRD), poll every 10 seconds until both of these print `No resources found`:
 
 ```bash
 kubectl get managed
+kubectl get deployment,service,configmap,secret -A -l crossplane.io/composite
 ```
 
-If managed resources from this example still exist after 3 minutes, log a warning but proceed — leftover resources shouldn't block other examples since each uses a different API group.
+Kubernetes deletes composed resources in the background after the XR is gone. If the XRD is deleted first, Kubernetes can no longer resolve the owner's type and leaves those resources behind, where they can collide with a later example (several examples reuse the XR name `my-app`).
+
+If composed resources still exist after 3 minutes, this is a **FAIL**: report the leftovers and stop.
 
 ### 3.6 Record Result
 
