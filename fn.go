@@ -7,6 +7,8 @@ import (
 	"maps"
 	"strings"
 
+	xpv1 "github.com/crossplane/crossplane/apis/v2/apiextensions/v1"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	"github.com/gobuffalo/flect"
 	"github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"github.com/kubernetes-sigs/kro/pkg/cel"
@@ -18,6 +20,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -221,7 +224,8 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		response.Fatal(rsp, err)
 		return rsp, nil
 	}
-	if err != nil {
+	allReady := err == nil
+	if !allReady {
 		f.log.Debug("Resources not ready yet", "reason", err)
 	}
 
@@ -249,6 +253,9 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 		response.Fatal(rsp, errors.Wrap(err, "cannot set desired composite resource"))
 		return rsp, nil
 	}
+
+	// evaluate custom conditions and include them in the response
+	setAuthorConditions(f.log, rsp, rt, rgd, allReady)
 
 	return rsp, nil
 }
@@ -541,6 +548,60 @@ func findCollectionNodeID(id string, rt *runtime.Runtime) string {
 			return prefix
 		}
 		remaining = prefix
+	}
+}
+
+// setAuthorConditions evaluates the conditions block of the ResourceGraph's
+// status (runtime.newCondition(...) expressions) and sets each resulting
+// condition on the XR.
+func setAuthorConditions(log logging.Logger, rsp *fnv1.RunFunctionResponse, rt *runtime.Runtime, rgd *v1alpha1.ResourceGraphDefinition, allReady bool) {
+	status := metav1.ConditionFalse
+	if allReady {
+		status = metav1.ConditionTrue
+	}
+
+	// runtime.condition(schema, ...) reads KRO's built-in instance conditions,
+	// which a function doesn't compute, so we approximate them from this run.
+	// GraphResolved is always True, because we only get here once the graph has
+	// compiled and run without a hard error. ResourcesReady and Ready are True
+	// once every resource is ready. InstanceManaged is about KRO's own
+	// finalizers and labels, so we leave it out.
+	builtins := []v1alpha1.Condition{
+		{Type: v1alpha1.InstanceConditionTypeGraphResolved, Status: metav1.ConditionTrue},
+		{Type: v1alpha1.InstanceConditionTypeResourcesReady, Status: status},
+		{Type: v1alpha1.InstanceConditionTypeReady, Status: status},
+	}
+
+	// A condition that's waiting for data, or whose expression fails, is left
+	// out. Crossplane only updates the conditions we return, so it keeps its
+	// last value on the XR.
+	conds, incomplete, err := rgdadapter.ProjectInstanceConditions(rt, rgd, builtins, 0)
+	if err != nil {
+		response.Warning(rsp, errors.Wrap(err, "cannot evaluate status conditions"))
+	}
+	if incomplete {
+		log.Debug("Some status conditions are waiting for data")
+	}
+	for _, c := range conds {
+		if xpv1.IsSystemConditionType(xpv2.ConditionType(c.ConditionType)) {
+			// Crossplane sets these itself, and ignores them from a function.
+			response.Warning(rsp, errors.Errorf("cannot set condition %q: Crossplane reserves this condition type", c.ConditionType))
+			continue
+		}
+
+		var opt *response.ConditionOption
+		switch metav1.ConditionStatus(c.Status) { //nolint:exhaustive // anything else is Unknown
+		case metav1.ConditionTrue:
+			opt = response.ConditionTrue(rsp, c.ConditionType, c.Reason)
+		case metav1.ConditionFalse:
+			opt = response.ConditionFalse(rsp, c.ConditionType, c.Reason)
+		default:
+			opt = response.ConditionUnknown(rsp, c.ConditionType, c.Reason)
+		}
+		if c.Message != "" {
+			opt = opt.WithMessage(c.Message)
+		}
+		opt.TargetComposite()
 	}
 }
 

@@ -3979,6 +3979,325 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
+		"StatusConditionsSetOnXR": {
+			reason: "Custom status conditions should be set on the XR, and runtime.condition(schema, ...) should read our approximation of KRO's built-in conditions",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"readyWhen": ["${bucket.status.?atProvider.?id.hasValue()}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"bucketName": "${bucket.status.atProvider.id}",
+							"conditions": [
+								"${runtime.newCondition({type: 'BucketCreated', status: 'True', reason: 'HasID', message: 'bucket ' + bucket.status.atProvider.id + ' exists'})}",
+								"${runtime.newCondition({type: 'AllResourcesReady', status: runtime.condition(schema, 'ResourcesReady').status, reason: 'Checked', message: ''})}"
+							]
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-abc123"},
+									"spec": {"forProvider": {"region": "us-west-2"}},
+									"status": {"atProvider": {"id": "test-bucket-abc123"}}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							// Conditions are returned separately, never in the desired XR's status
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"status": {
+									"bucketName": "test-bucket-abc123"
+								}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Ready: fnv1.Ready_READY_TRUE,
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+					Conditions: []*fnv1.Condition{
+						{
+							Type:    "BucketCreated",
+							Status:  fnv1.Status_STATUS_CONDITION_TRUE,
+							Reason:  "HasID",
+							Message: new("bucket test-bucket-abc123 exists"),
+							Target:  fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+						{
+							// Every resource is ready this run
+							Type:   "AllResourcesReady",
+							Status: fnv1.Status_STATUS_CONDITION_TRUE,
+							Reason: "Checked",
+							Target: fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+					},
+				},
+			},
+		},
+		"StatusConditionWaitingForDataLeftOut": {
+			reason: "A custom status condition whose data isn't available yet should be left out, so Crossplane keeps its last value on the XR",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"readyWhen": ["${bucket.status.?atProvider.?id.hasValue()}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"conditions": [
+								"${runtime.newCondition({type: 'BucketCreated', status: 'True', reason: 'HasID', message: 'bucket ' + bucket.status.atProvider.id + ' exists'})}",
+								"${runtime.newCondition({type: 'AllResourcesReady', status: runtime.condition(schema, 'ResourcesReady').status, reason: 'Checked', message: ''})}"
+							]
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Ready: fnv1.Ready_READY_FALSE,
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+					// BucketCreated is left out, because bucket.status doesn't exist yet
+					Conditions: []*fnv1.Condition{
+						{
+							// bucket isn't ready yet
+							Type:   "AllResourcesReady",
+							Status: fnv1.Status_STATUS_CONDITION_FALSE,
+							Reason: "Checked",
+							Target: fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+					},
+				},
+			},
+		},
+		"StatusConditionWarnings": {
+			reason: "A custom status condition that fails to evaluate (here, one with no type), or uses a condition type Crossplane reserves, should be left out with a warning, while the rest are still set",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"conditions": [
+								"${runtime.newCondition({status: 'True', reason: 'Checked', message: ''})}",
+								"${runtime.newCondition({type: 'Ready', status: 'True', reason: 'Checked', message: ''})}",
+								"${runtime.newCondition({type: 'Configured', status: 'True', reason: 'Checked', message: ''})}"
+							]
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+					Results: []*fnv1.Result{
+						{
+							Severity: fnv1.Severity_SEVERITY_WARNING,
+							Message:  "cannot evaluate status conditions: author condition evaluation degraded: \"${runtime.newCondition({status: 'True', reason: 'Checked', message: ''})}\": parse \"runtime.newCondition({status: 'True', reason: 'Checked', message: ''})\": ERROR: <input>:1:22: runtime.newCondition: 'type' is required\n | runtime.newCondition({status: 'True', reason: 'Checked', message: ''})\n | .....................^",
+							Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+						{
+							Severity: fnv1.Severity_SEVERITY_WARNING,
+							Message:  `cannot set condition "Ready": Crossplane reserves this condition type`,
+							Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+					},
+					Conditions: []*fnv1.Condition{
+						{
+							Type:   "Configured",
+							Status: fnv1.Status_STATUS_CONDITION_TRUE,
+							Reason: "Checked",
+							Target: fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for name, tc := range cases {
