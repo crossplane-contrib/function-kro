@@ -2699,6 +2699,184 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
+		"ExistingDependentWaitsForExternalRefFetch": {
+			reason: "A resource that already exists and reads an external ref Crossplane hasn't fetched yet should not fail the run, so Crossplane can fetch the ref and call the function again",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "platform",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"name": "platform-config"
+								}
+							}
+						}, {
+							"id": "app",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {"name": "app"},
+								"data": {
+									"region": "${platform.data.region}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket", "namespace": "xr-ns"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"app": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "app", "namespace": "xr-ns"},
+									"data": {"region": "us-west-2"}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+						Resources: map[string]*fnv1.ResourceSelector{
+							"platform": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "platform-config"},
+								Namespace:  new("xr-ns"),
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+					},
+				},
+			},
+		},
+		"ExistingDependentOfMissingExternalRefNotRenderable": {
+			reason: "A resource that already exists and reads an external ref Crossplane fetched but didn't find should return a fatal result, rather than being left out of desired state and deleted by Crossplane",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "platform",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"name": "platform-config"
+								}
+							}
+						}, {
+							"id": "app",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {"name": "app"},
+								"data": {
+									"region": "${platform.data.region}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket", "namespace": "xr-ns"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"app": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "app", "namespace": "xr-ns"},
+									"data": {"region": "us-west-2"}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+					RequiredResources: map[string]*fnv1.Resources{
+						"platform": {},
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+						Resources: map[string]*fnv1.ResourceSelector{
+							"platform": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "platform-config"},
+								Namespace:  new("xr-ns"),
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `resource "app" already exists but cannot be rendered, refusing to delete it: node "app": eval "platform.data.region" at "data.region": eval "platform.data.region": no such attribute(s): platform (data pending)`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
 		"CollectionForEach": {
 			reason: "A forEach resource should expand into N composed resources named {id}-{index} with collection-index labels",
 			args: args{

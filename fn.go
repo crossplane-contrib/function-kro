@@ -220,7 +220,13 @@ func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest
 	// A resource that can't be rendered would be left out of desired state and
 	// deleted by Crossplane. Fail instead, so Crossplane leaves everything as it
 	// is.
-	if err != nil && !stderrors.Is(err, executor.ErrNotReady) {
+	//
+	// If we're still waiting on Crossplane to fetch an external ref though, we
+	// don't fail yet, because Crossplane won't fetch anything for us after a
+	// fatal result. The resource we couldn't render isn't in e.Desired, so this
+	// response leaves it out. That's fine, because Crossplane will fetch the ref,
+	// call us again, and only use the response from that last call.
+	if err != nil && !stderrors.Is(err, executor.ErrNotReady) && !fetching(e.ExternalRefSelectors, required) {
 		response.Fatal(rsp, err)
 		return rsp, nil
 	}
@@ -497,6 +503,18 @@ func requiredExternalResources(req *fnv1.RunFunctionRequest, resources []*v1alph
 		out[r.ID] = objs
 	}
 	return out, nil
+}
+
+// fetching returns true if we've asked Crossplane for an external ref that it
+// hasn't fetched for us yet. A ref that Crossplane looked for but didn't find
+// still comes back to us as an empty entry, so we don't count that one.
+func fetching(selectors map[string]*fnv1.ResourceSelector, required map[string][]*unstructured.Unstructured) bool {
+	for id := range selectors {
+		if _, ok := required[id]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // groupObservedByNodeID groups observed composed resources by their runtime

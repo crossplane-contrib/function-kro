@@ -323,6 +323,8 @@ Supporting both `RequiredSchemas` and `RequiredCRDs` ensures compatibility with 
 
 Crossplane deletes any composed resource a function stops returning. Upstream kro instead keeps a resource it can't process this cycle. So when a node is waiting on a dependency or its data, `preserve` (`kro/graphengine/executor/crossplane.go`) renders an existing resource again to keep it, and reads a waiting external ref so resources that read it can be rendered again. If a resource can't be rendered at all, the function returns a fatal result, which makes Crossplane leave every resource as it is.
 
+The exception is when we're still waiting on Crossplane to fetch an external ref. Crossplane won't fetch anything after a fatal result, so the function returns without the resource instead, and Crossplane fetches the ref and calls it again. Crossplane only uses the response from that last call, so it doesn't delete the resource.
+
 ## Key Reference Documents
 
 - `patches/v0.10.0_PATCHES.md`: every change we make to upstream kro code, and our code that tracks upstream (the definitive source for what changed from upstream)
