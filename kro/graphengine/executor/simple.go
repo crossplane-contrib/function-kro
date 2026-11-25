@@ -118,6 +118,10 @@ type Simple struct {
 	// converges. Called from parallel apply goroutines, so the implementation
 	// must be safe for concurrent use (an EventRecorder is).
 	OnToleratedRejection func(ToleratedRejection)
+	// Crossplane replaces the API server for a composition function: it
+	// collects desired state instead of applying it, and answers reads from
+	// what Crossplane sent. See crossplane.go.
+	Crossplane *Crossplane
 }
 
 // identityClaimSet is the per-Apply set of claimed object identities, guarded by
@@ -273,6 +277,7 @@ func (s *Simple) Apply(ctx context.Context, rt *runtime.Runtime, w watchrouter.W
 			if dep, blocked := firstUnreadyDep(n, ready); blocked {
 				result.Unresolved = append(result.Unresolved, n.ID())
 				recordSoft(fmt.Errorf("apply %q: waiting for dependency %q: %w", n.ID(), dep, ErrNotReady))
+				s.preserve(ctx, rt, n)
 				continue
 			}
 		}
@@ -286,6 +291,7 @@ func (s *Simple) Apply(ctx context.Context, rt *runtime.Runtime, w watchrouter.W
 				// previous entries for this NodeID.
 				result.Unresolved = append(result.Unresolved, n.ID())
 				recordSoft(fmt.Errorf("apply %q: includeWhen: %w (%w)", n.ID(), err, ErrNotReady))
+				s.preserve(ctx, rt, n)
 				continue
 			}
 			recordHard(fmt.Errorf("apply %q: %w", n.ID(), err))
@@ -325,6 +331,7 @@ func (s *Simple) Apply(ctx context.Context, rt *runtime.Runtime, w watchrouter.W
 			if isSoftRuntimeErr(err) {
 				result.Unresolved = append(result.Unresolved, n.ID())
 				recordSoft(fmt.Errorf("apply %q: resolve: %w (%w)", n.ID(), err, ErrNotReady))
+				s.preserve(ctx, rt, n)
 				continue
 			}
 			recordHard(fmt.Errorf("apply %q: resolve: %w", n.ID(), err))
@@ -378,7 +385,7 @@ func (s *Simple) applyNodeByKind(
 		n.SetObserved(desired, desired)
 		publishScope(rt, n, n.Observed())
 	case compiler.NodeKindTemplate:
-		applied, err := s.applyTemplate(ctx, rt, w, n, desired)
+		applied, err := s.emitTemplate(rt, n, desired)
 		// Record whatever landed before any error so tracking never
 		// loses a resource that actually reached the cluster.
 		result.Applied = append(result.Applied, applied...)
@@ -451,7 +458,7 @@ func (s *Simple) applyNodeByKind(
 		}
 		publishScope(rt, n, n.Observed())
 	case compiler.NodeKindPatch:
-		contributions, err := s.applyPatch(ctx, rt, w, n, desired)
+		contributions, err := s.capturePatch(n, desired)
 		// Record whatever landed before any error so tracking never loses a
 		// contribution that actually reached the cluster (a forEach patch may
 		// fail partway through).
@@ -1254,7 +1261,7 @@ func (s *Simple) applyRef(ctx context.Context, w watchrouter.Watcher, rt *runtim
 	live := &unstructured.Unstructured{}
 	live.SetGroupVersionKind(ref.GroupVersionKind())
 	key := client.ObjectKey{Namespace: ref.GetNamespace(), Name: ref.GetName()}
-	if err := s.Client.Get(ctx, key, live); err != nil {
+	if err := s.Crossplane.Get(n.ID(), key, live); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("external ref %s %q not found: %w", ref.GetKind(), key, ErrNotReady)
 		}
@@ -1335,7 +1342,7 @@ func (s *Simple) applyRefCollection(ctx context.Context, w watchrouter.Watcher, 
 	if ns != "" {
 		opts = append(opts, client.InNamespace(ns))
 	}
-	if err := s.Client.List(ctx, list, opts...); err != nil {
+	if err := s.Crossplane.List(n.ID(), list, opts...); err != nil {
 		return nil, fmt.Errorf("list external collection %q (%s): %w", n.ID(), gvr.String(), err)
 	}
 

@@ -1,20 +1,20 @@
-// Package resolver provides schema resolution strategies for function-kro.
-//
-// This file contains function-kro additions that are not present in upstream KRO.
-// These provide combined resolvers that pair Crossplane-provided schemas (or CRD-extracted
-// schemas) with a core resolver for built-in Kubernetes types.
-package resolver
+// Package schemaresolver resolves OpenAPI schemas for kro from what Crossplane
+// sends a function: either the schemas themselves (required_schemas) or the
+// CRDs that contain them. Each is paired with a resolver for built-in
+// Kubernetes types.
+package schemaresolver
 
 import (
 	"maps"
 
-	"github.com/crossplane-contrib/function-kro/schemas"
 	"k8s.io/apiextensions-apiserver/pkg/generated/openapi"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/cel/openapi/resolver"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/validation/spec"
+
+	"github.com/crossplane-contrib/function-kro/schemas"
 )
 
 // NewCombinedResolverFromSchemas creates a schema resolver that combines
