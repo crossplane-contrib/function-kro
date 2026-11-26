@@ -15,6 +15,13 @@
       "matchManagers": ["crossplane"],
       "matchFileNames": ["example/**"],
       "groupName": "examples"
+    },
+    {
+      "description": "kube-openapi and k8s.io/utils have no version tags. Let the k8s.io libraries that depend on them bump them.",
+      "matchDatasources": ["go"],
+      "matchUpdateTypes": ["digest"],
+      "matchPackageNames": ["k8s.io/utils{/,}**", "k8s.io/kube-openapi{/,}**"],
+      "enabled": false
     }
   ],
   "postUpdateOptions": [
