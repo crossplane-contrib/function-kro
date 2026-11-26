@@ -28,6 +28,14 @@ KRO is a standalone Kubernetes controller for resource orchestration. Function-K
 
 ## Architecture Overview
 
+Upstream kro reconciles an RGD instance in layers: `pkg/graphengine/rgdadapter` translates the RGD into a `Graph`, `pkg/graphengine/compiler` compiles it, `pkg/graphengine/runtime` evaluates it, and `pkg/graphengine/executor` walks the nodes and applies each one to the API server.
+
+function-kro imports the rgdadapter, compiler and runtime unmodified as the Go module `github.com/kubernetes-sigs/kro`, and vendors the one layer it has to change, the executor, into `kro/graphengine/executor/`. Upstream applies each node to the API server. Crossplane applies, watches and garbage collects composed resources, so our copy returns desired state to Crossplane instead.
+
+Upstream's rgdadapter types the `schema` variable from the RGD's SimpleSchema. We have the XR's OpenAPI schema from Crossplane instead, so `engine.go` wraps the compiler we pass to the rgdadapter and overrides the `schema` node's type with it.
+
+`patches/v0.10.0_PATCHES.md` documents every change we make to upstream code, and `./scripts/diff-upstream-kro.sh` shows them. The "Vendoring Rules" section of `patches/UPGRADE_PROCESS.md` says when to vendor an upstream package, and where code that repeats upstream logic may live.
+
 ### Request Processing Flow
 
 ```
@@ -38,21 +46,24 @@ Crossplane RunFunctionRequest
 │                                                                  │
 │  1. Parse ResourceGraph input                                    │
 │  2. Request schemas (requireSchemas → buildResolver)             │
-│  3. Build resource graph (graph.NewBuilder → NewResourceGraphDef)│
+│  3. Wrap the input as an upstream ResourceGraphDefinition        │
+│     (engine.go: resourceGraphDefinition)                         │
+│  4. Translate, compile and build the runtime with upstream's     │
+│     rgdadapter.BuildRuntimeForInstance, typed from the XR schema │
 │     - XR schema gets a `context` property for schema.context     │
-│  4. Create runtime (runtime.FromGraph)                           │
-│     - From a copy of the XR with the function context set        │
-│  5. Process external refs:                                       │
-│     - Resolve identity (GetDesiredIdentity with CEL)             │
-│     - Request from Crossplane, inject as observed state          │
-│  6. Set observed composed resources on runtime nodes             │
-│  7. Process nodes in topological order:                          │
-│     - Check IsIgnored (includeWhen + contagious dependency skip) │
-│     - Evaluate GetDesired (hard resolve for resources/collections│
-│       soft resolve for instance)                                 │
-│     - Handle collections (forEach → {id}-{name}, ...)            │
-│     - Evaluate readiness (CheckReadiness → error sentinel)      │
-│  8. Build XR status from instance node's soft-resolved fields    │
+│     - schema node rendered from an XR copy with the context set  │
+│  5. Gather external resources Crossplane fetched, and group      │
+│     observed composed resources by node                          │
+│  6. Walk nodes in topological order with the vendored executor   │
+│     (kro/graphengine/executor: Crossplane.Apply → Simple.Apply): │
+│     - wait until dependencies are ready                          │
+│     - check IsIgnored (includeWhen + contagious skip)            │
+│     - Resolve (render), emit desired resources or request        │
+│       external refs, publish observed state into scope           │
+│     - CheckReadiness                                             │
+│     - keep existing resources that can't be processed this run   │
+│  7. Build XR status from the status node, and set author         │
+│     conditions (runtime.newCondition) on the XR                  │
 └──────────────────────────────────────────────────────────────────┘
     ↓
 Crossplane RunFunctionResponse (desired resources + XR status)
@@ -61,68 +72,41 @@ Crossplane RunFunctionResponse (desired resources + XR status)
 ### Key Components
 
 ```
-fn.go                        Main function entry point
-    ↓
-kro/graph/builder.go         Builds validated resource graphs
-    ├── node.go              Node types (Resource, Collection, External, Instance)
-    ├── parser/              Extracts CEL expressions from templates
-    ├── fieldpath/           Field path building and parsing
-    ├── schema/resolver/     OpenAPI schema resolution strategies
-    ├── dag/                 Directed acyclic graph for dependencies
-    ├── variable/            CEL variable management
-    └── validation.go        Validates resources and expressions
-    ↓
-kro/runtime/                 Executes the graph, evaluates CEL
-    ├── runtime.go           Runtime interface, FromGraph constructor
-    ├── node.go              Runtime node (GetDesired, CheckReadiness, IsIgnored, etc.)
-    ├── node_resolve.go      Resolution helpers (soft/hard resolve, collections)
-    ├── collection.go        Collection identity matching, index labels
-    └── resolver/            Template field resolution (path-based value injection)
-    ↓
-kro/cel/                     CEL environment setup and evaluation
-    ├── environment.go       CEL environment construction with options
-    ├── ast/inspector.go     AST inspection for dependency extraction
-    ├── library/random.go    Custom CEL random functions
-    └── schemas.go           Schema-to-CEL type mapping
+fn.go                         Function entry point, schema resolution, observed grouping
+engine.go                     Input wrapping, REST mapper, schema resolver, and the
+                              compiler wrapper that types `schema` from the XR's schema
+kro/graphengine/executor/     Upstream's executor, vendored and adapted
+    ├── simple.go                The node walk (upstream, lightly patched)
+    ├── executor.go              Types and errors (identical to upstream)
+    └── crossplane.go            Our additions: Crossplane stands in for the API server
+internal/schemaresolver/      Resolves OpenAPI schemas from what Crossplane sends
+    ├── schema_map_resolver.go   From required_schemas (Crossplane v2.2+)
+    ├── crd_resolver.go          From CRDs (older Crossplane)
+    └── combined_resolver.go     Pairs either with built-in Kubernetes types
 ```
+
+Upstream packages we vendor and import are listed in `patches/v0.10.0_PATCHES.md`.
 
 ## Codebase Structure
 
 ```
 function-kro/
 ├── fn.go                    # Main function implementation (START HERE)
+├── engine.go                # Builds the upstream graph engine runtime
 ├── main.go                  # CLI entry point with gRPC server setup
 ├── spec-desired-ssa.md      # SSA design spec (historical — see note in Design Decisions)
 │
+├── kro/graphengine/         # Vendored upstream executor, adapted for Crossplane
 ├── input/v1alpha1/          # Input API definitions (ResourceGraph type)
-│
-├── kro/                     # Core KRO implementation
-│   ├── cel/                 # CEL environment setup and expression evaluation
-│   │   ├── ast/             # AST inspection for dependency extraction
-│   │   └── library/         # Custom CEL functions (random)
-│   ├── features/            # Feature gate definitions
-│   ├── graph/               # Graph building and validation
-│   │   ├── builder.go       # Main graph builder (key file)
-│   │   ├── node.go          # Node types and graph node structure
-│   │   ├── validation.go    # Resource and expression validation
-│   │   ├── dag/             # Generic DAG with cycle detection
-│   │   ├── fieldpath/       # Field path building and parsing
-│   │   ├── parser/          # Extracts ${...} expressions from templates
-│   │   ├── schema/resolver/ # OpenAPI schema resolution strategies
-│   │   └── variable/        # CEL variable management
-│   ├── runtime/             # Runtime execution engine
-│   │   ├── node.go          # Runtime node (GetDesired, IsReady, IsIgnored, etc.)
-│   │   ├── collection.go    # Collection identity matching, index labels
-│   │   └── resolver/        # Template field resolution engine
-│   ├── metadata/            # Kubernetes metadata utilities (labels, finalizers, GVK)
-│   └── testutil/            # Test helpers (generator, fake discovery/resolver)
+├── internal/schemaresolver/ # Schema resolution from Crossplane-provided schemas or CRDs
+├── schemas/                 # Generated OpenAPI definitions for built-in Kubernetes types
 │
 ├── patches/                 # Upgrade documentation
-│   ├── v0.9.0_PATCHES.md   # Current adaptation reference (v0.9.0 baseline)
-│   ├── v0.8.x_PATCHES.md   # Historical v0.8.x adaptation reference
-│   └── UPGRADE_PROCESS.md   # Process for upgrading from upstream KRO
+│   ├── UPGRADE_PROCESS.md   # Process for upgrading to a new upstream kro release
+│   ├── UPSTREAM_DIFFERENCES.md # How function-kro behaves differently from kro
+│   └── v0.10.0_PATCHES.md   # Current adaptation reference (v0.10.0 baseline)
 ├── package/                 # Crossplane package definition
-├── example/                 # Usage examples (basic, collections, conditionals, externalref, readiness, omit, core, app, context, collection-limits)
+├── example/                 # Usage examples (basic, collections, conditionals, externalref, readiness, omit, core, app, context, conditions, collection-limits)
 ├── scripts/                 # Build scripts (build-local.sh, diff-upstream-kro.sh)
 └── Dockerfile               # Production build
 ```
@@ -151,17 +135,16 @@ type Resource struct {
 type ForEachDimension map[string]string  // iterator variable name → CEL list expression
 ```
 
-### Node Types
+### Node Kinds
 
-The graph builder categorizes each resource into a NodeType that determines runtime behavior:
+Upstream's compiler gives each node a kind that determines how the walk handles it:
 
-- **NodeTypeResource**: Standard managed resource. Hard resolution (fails if any CEL expression can't resolve).
-- **NodeTypeCollection**: forEach-expanded resource. Hard resolution per expansion item. Named `{id}-{metadata.name}` in composed output (e.g., `subnets-my-app-us-east-1`).
-- **NodeTypeExternal**: ExternalRef read-only resource. Identity-only resolution (name/namespace). Excluded from desired output.
-- **NodeTypeExternalCollection**: ExternalRef with selector, expands to multiple observed resources. Excluded from desired output.
-- **NodeTypeInstance**: The XR itself. Soft resolution (best-effort partial status — skips unresolvable fields).
+- **Def** (`schema`): the XR itself, exposed to CEL as `${schema}`.
+- **Template**: a resource we render and return as a desired composed resource. A template with `forEach` is a collection, named `{id}-{metadata.name}` in composed output (e.g., `subnets-my-app-us-east-1`).
+- **Ref**: an `externalRef`. We ask Crossplane to fetch it and never return it as desired. A ref with a selector is a collection of whatever matches.
+- **Patch** (`instance`): the XR's status, rendered from the ResourceGraph's status block. Fields whose data is pending are left out.
 
-See `kro/graph/node.go` for type definitions, `kro/runtime/node.go` for evaluation logic.
+See `applyNodeByKind` in `kro/graphengine/executor/simple.go` for how each kind is handled, and `crossplane.go` beside it for the Crossplane-specific parts.
 
 ### CEL Expressions
 
@@ -214,10 +197,6 @@ crossplane xpkg build -f package --embed-runtime-image=runtime
 ```bash
 # Run all tests
 go test -v -cover ./...
-
-# Run specific package tests
-go test -v ./kro/runtime/...
-go test -v ./kro/graph/...
 
 # Run with race detection
 go test -race ./...
@@ -275,18 +254,16 @@ golangci-lint run
 
 ### Adding a New Resource Field
 
-1. Update `input/v1alpha1/input.go` with new field
+Fields on `Resource`, `ExternalRef` and `ForEachDimension` come from upstream's `api/v1alpha1` and arrive when we bump the kro dependency. For a field only function-kro needs:
+
+1. Update `input/v1alpha1/input.go` with the new field
 2. Run `go generate ./...` to regenerate code
-3. Update `kro/graph/builder.go` to handle new field
-4. Add validation in `kro/graph/validation.go`
-5. Add tests
+3. Handle it in `engine.go` (translating input to upstream types) or `kro/graphengine/executor/crossplane.go` (the walk), and document any change to vendored code in the patches doc
+4. Add tests
 
 ### Modifying CEL Expression Handling
 
-Key files:
-- `kro/graph/parser/parser.go` - Expression extraction
-- `kro/cel/environment.go` - CEL environment setup
-- `kro/runtime/runtime.go` - Expression evaluation
+CEL parsing, type checking and evaluation are upstream's (`pkg/graphengine/compiler`, `pkg/graphengine/runtime`, `pkg/cel`). What we control is what's in scope: `emitTemplate` in `kro/graphengine/executor/crossplane.go` gives the walk each node's observed state, or its rendered state if Crossplane hasn't created it yet, and the walk publishes that.
 
 ### Debugging Schema Resolution
 
@@ -295,41 +272,34 @@ The function logs schema resolution attempts. Key code paths:
 - `fn.go:buildResolver()` - Dispatcher: picks schema path vs CRD path based on capability detection
 - `fn.go:buildResolverFromSchemas()` - Modern path (Crossplane v2.2+, RequiredSchemas capability)
 - `fn.go:buildResolverFromCRDs()` - Fallback path (older Crossplane, extracts schemas from CRDs)
-- `kro/graph/schema/resolver/` - Resolver implementations
+- `internal/schemaresolver/` - Resolver implementations
 
 ### Understanding Dependency Order
 
-The DAG package (`kro/graph/dag/`) handles topological sorting:
-- `AddVertex()` - Register resources
-- `AddDependencies()` - Add edges (fails on cycles)
-- `TopologicalSort()` - Get processing order
+Upstream's compiler builds the dependency graph and `runtime.Nodes()` returns nodes in topological order. The vendored executor's `Simple.Apply` holds a node back until every node it depends on is ready, because `Crossplane.Apply` turns on readiness gating as upstream's instance controller does.
 
 ### Collections (ForEach)
 
 Resources with `forEach` expand into multiple composed resources at runtime:
-- Builder sets `NodeTypeCollection` on the graph node (`kro/graph/builder.go`)
-- Runtime evaluates forEach dimensions as CEL list expressions, then expands via cartesian product for multi-dimensional cases (`kro/runtime/node.go:hardResolveCollection`)
-- Each expanded resource gets a `kro.run/collection-index` label and is named `{id}-{metadata.name}` in composed resources (e.g., `subnets-my-app-us-east-1`)
-- Collection `readyWhen` uses the `each` variable to evaluate per-item readiness
-- Observed composed resources are matched back to collection nodes by checking the `kro.run/collection-index` label and stripping the `-N` suffix
-
-Key files: `kro/runtime/node.go` (expansion logic), `kro/runtime/collection.go` (identity matching, index labels), `fn.go` (observation grouping)
+- Upstream's runtime expands forEach dimensions (cartesian product) when a collection node is resolved
+- `emitTemplate` (`kro/graphengine/executor/crossplane.go`) labels each item with `kro.run/collection-index` and names it `{id}-{metadata.name}` in composed resources (e.g., `subnets-my-app-us-east-1`)
+- Collection `readyWhen` uses the `each` variable to evaluate per-item readiness. A collection isn't ready until every rendered item is observed.
+- `fn.go:groupObservedByNodeID` matches observed composed resources back to collection nodes by the `kro.run/collection-index` label and the composed resource name prefix
 
 ### External References
 
 ExternalRef resources reference existing cluster resources without creating them:
-- Builder sets `NodeTypeExternal` on the graph node (mutually exclusive with Template)
-- `fn.go:externalRefSelectorsFromRuntime()` evaluates CEL expressions in external ref metadata (name/namespace can use `${schema.spec.*}`)
-- Crossplane fetches the external resource; its observed state is injected on the runtime node via `SetObserved()`
-- Multi-phase: if a dependency isn't observed yet, the external ref is skipped and resolved on the next function invocation
-- External refs are excluded from desired composed resources (read-only semantics)
-
-Key files: `fn.go` (external ref processing), `input/v1alpha1/input.go` (ExternalRef, ExternalRefMetadata types)
+- The vendored executor's `applyRef` and `applyRefCollection` render the ExternalRef (name, namespace and selector can use CEL), and `Crossplane.Get` and `Crossplane.List` ask Crossplane to fetch it via required resources
+- Crossplane can only select by exact label values (https://github.com/crossplane/crossplane/issues/6744), so for a selector with `matchExpressions` we fetch by `matchLabels` and filter the rest ourselves
+- Multi-phase: until Crossplane has fetched a ref, the ref isn't ready and its dependents wait for a later invocation
+- An external collection that matches nothing is a valid, empty, ready collection
+- External refs are never returned as desired composed resources
 
 ## Key Dependencies
 
 | Package | Purpose |
 |---------|---------|
+| `github.com/kubernetes-sigs/kro` | kro's graph engine, CEL libraries and API types |
 | `github.com/crossplane/function-sdk-go` | Crossplane function SDK |
 | `github.com/google/cel-go` | CEL expression evaluation |
 | `k8s.io/apimachinery` | Kubernetes types and utilities |
@@ -339,7 +309,7 @@ Key files: `fn.go` (external ref processing), `input/v1alpha1/input.go` (Externa
 
 ### Server-Side Apply (SSA) Compatibility
 
-The runtime returns only rendered template fields via `node.GetDesired()` (returns `[]*unstructured.Unstructured`). This prevents claiming ownership of provider-defaulted fields during SSA. For the instance node (XR status), `softResolve()` returns only fields where all CEL expressions resolved successfully, preventing partial template strings from leaking into status. See `spec-desired-ssa.md` for the original design spec (note: the spec references older API names like `GetRenderedResource`; the implementation evolved during the v0.8.x rewrite).
+Desired composed resources contain only the fields their templates render, so we never claim ownership of provider-defaulted fields during SSA. The desired XR contains only the status fields the ResourceGraph declares and could resolve. See `spec-desired-ssa.md` for the original design spec (note: the spec references older API names like `GetRenderedResource`; the implementation evolved since).
 
 ### Two-Path Schema Resolution
 
@@ -347,19 +317,21 @@ Supporting both `RequiredSchemas` and `RequiredCRDs` ensures compatibility with 
 
 ### Function Context
 
-`fn.go` exposes the function context as `schema.context` without changes to `kro/`. It adds a `context` property to the XR schema whose values preserve unknown fields and are nullable, then sets the context on a copy of the observed XR before calling `runtime.FromGraph()`. A template that reads through a context key whose whole value is null (`{"apiextensions.crossplane.io/environment": null}`) leaves its resource pending, but a null value nested under a key (`{"apiextensions.crossplane.io/environment": {"region": null}}`) renders as `null` into the composed resource. Writing to the context is not supported.
+`fn.go` exposes the function context as `schema.context` without changes to `kro/`. It adds a `context` property to the XR schema whose values preserve unknown fields and are nullable, and passes the runtime a copy of the observed XR with the context set, using upstream's `runtime.WithNodeObjectOverride` for the `schema` node. A template that reads through a context key whose whole value is null (`{"apiextensions.crossplane.io/environment": null}`) leaves its resource pending, but a null value nested under a key (`{"apiextensions.crossplane.io/environment": {"region": null}}`) renders as `null` into the composed resource. Writing to the context is not supported.
 
-### Expression Caching
+### Keeping Resources That Can't Be Processed
 
-The runtime deduplicates CEL expression evaluation via a shared `expressionsCache` in `runtime.FromGraph()`. Non-iteration expressions that appear in multiple nodes share the same `expressionEvaluationState`, so they're evaluated once and reused. Iteration expressions (forEach) are NOT cached because they need fresh evaluation with different iterator bindings per item.
+Crossplane deletes any composed resource a function stops returning. Upstream kro instead keeps a resource it can't process this cycle. So when a node is waiting on a dependency or its data, `preserve` (`kro/graphengine/executor/crossplane.go`) renders an existing resource again to keep it, and reads a waiting external ref so resources that read it can be rendered again. If a resource can't be rendered at all, the function returns a fatal result, which makes Crossplane leave every resource as it is.
+
+The exception is when we're still waiting on Crossplane to fetch an external ref. Crossplane won't fetch anything after a fatal result, so the function returns without the resource instead, and Crossplane fetches the ref and calls it again. Crossplane only uses the response from that last call, so it doesn't delete the resource.
 
 ## Key Reference Documents
 
-- `patches/v0.9.0_PATCHES.md` — Comprehensive reference for all KRO v0.9.0 adaptations (the definitive source for what changed from upstream)
-- `patches/v0.8.x_PATCHES.md` — Historical reference for KRO v0.8.x adaptations (superseded by v0.9.0)
-- `patches/UPGRADE_PROCESS.md` — Process for upgrading from upstream KRO releases
+- `patches/v0.10.0_PATCHES.md`: every change we make to upstream kro code, and our code that tracks upstream (the definitive source for what changed from upstream)
+- `patches/UPGRADE_PROCESS.md`: process for upgrading to a new upstream kro release
+- `patches/UPSTREAM_DIFFERENCES.md`: where function-kro behaves differently from upstream kro, and validation it doesn't run
 - `spec-desired-ssa.md` — Original SSA design spec (references older API names; implementation evolved)
-- `example/README.md` — Working examples for all major features (basic, collections, conditionals, externalref, readiness, omit, core, app, context, collection-limits)
+- `example/README.md` — Working examples for all major features (basic, collections, conditionals, externalref, readiness, omit, core, app, context, conditions, collection-limits)
 
 ## Auditing Our Code Against Upstream KRO
 
@@ -369,7 +341,7 @@ The runtime deduplicates CEL expression evaluation via a shared `expressionsCach
 
 Two skills automate the audit process end-to-end:
 
-- **`/audit-patches v<tag>`** — Validates that `patches/v*_PATCHES.md` accurately documents all modifications, additions, and exclusions. Use when checking documentation accuracy or before an upgrade. Current baseline: `v0.9.0`.
+- **`/audit-patches v<tag>`** — Validates that `patches/v*_PATCHES.md` accurately documents all modifications, additions, and exclusions. Use when checking documentation accuracy or before an upgrade. Current baseline: `v0.10.0`.
 - **`/review-kro-adaptations v<tag>`** — Principal-level engineering review of every adaptation. Assesses minimality, correctness, maintainability, and whether a senior engineer would make different choices. Use for code quality assessment.
 
 Both skills use the diff script under the hood, clone upstream once, and produce structured reports.
@@ -384,7 +356,7 @@ If the skills are unavailable or you need to debug, use the diff script directly
    ./scripts/diff-upstream-kro.sh -s -r <upstream-tag>
 
    # Full diff for a specific file
-   ./scripts/diff-upstream-kro.sh -f graph/builder.go -r <upstream-tag>
+   ./scripts/diff-upstream-kro.sh -f graphengine/executor/simple.go -r <upstream-tag>
 
    # Full diff of everything (verbose)
    ./scripts/diff-upstream-kro.sh -r <upstream-tag>
@@ -416,8 +388,8 @@ Check that the GVK is included in the composition's schema requirements or that 
 
 ### Circular Dependency Errors
 
-Review resource references to ensure no cycles. The DAG builder will fail fast on cycle detection.
+Review resource references to ensure no cycles. Compiling the graph fails fast on a cycle.
 
 ### Type Mismatch Errors
 
-Ensure CEL expression return types match the expected field types from the OpenAPI schema. Check `kro/graph/validation.go` for type checking logic.
+Ensure CEL expression return types match the expected field types from the OpenAPI schema. Upstream's compiler type checks every expression against the schema of the field it writes.

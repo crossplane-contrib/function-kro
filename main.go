@@ -3,11 +3,10 @@ package main
 
 import (
 	"github.com/alecthomas/kong"
+	"github.com/kubernetes-sigs/kro/pkg/features"
+	"github.com/kubernetes-sigs/kro/pkg/graph"
 
 	"github.com/crossplane/function-sdk-go"
-
-	"github.com/crossplane-contrib/function-kro/kro/features"
-	"github.com/crossplane-contrib/function-kro/kro/graph"
 )
 
 // CLI of this Function.
@@ -38,7 +37,7 @@ func (c *CLI) Run() error {
 		}
 	}
 
-	rgdConfig := graph.RGDConfig{
+	rgdConfig := graph.Config{
 		MaxCollectionSize:          c.RGDMaxCollectionSize,
 		MaxCollectionDimensionSize: c.RGDMaxCollectionDimSize,
 	}

@@ -45,6 +45,9 @@ spec:
       #
       # Note the CEL expression in the label value — the selector dynamically
       # matches ConfigMaps for this specific XR instance by name.
+      #
+      # The matchExpressions entry leaves out any subscriber that has paused
+      # its subscription. A subscriber with no subscription label still matches.
       - id: subscribers
         externalRef:
           apiVersion: v1
@@ -53,6 +56,10 @@ spec:
             selector:
               matchLabels:
                 notification-channel: ${schema.metadata.name}
+              matchExpressions:
+              - key: subscription
+                operator: NotIn
+                values: ["paused"]
       # VPC using region from the external ConfigMap
       - id: vpc
         template:

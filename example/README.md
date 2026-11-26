@@ -2,7 +2,7 @@
 
 These examples demonstrate the key capabilities of `function-kro`, from basic resource
 dependencies through conditional creation, readiness checks, external references,
-collections, field omission, core Kubernetes resources, composing a Kubernetes application, reading the function context, and collection size limits.
+collections, field omission, core Kubernetes resources, composing a Kubernetes application, reading the function context, setting custom conditions, and collection size limits.
 
 ## Pre-Requisites
 
@@ -135,6 +135,9 @@ defines CEL expressions that determine when it is considered ready. For example,
 safe field access (`?.` operator) to check that `status.atProvider.id` has a value, and the
 security group checks for a `Ready=True` condition.
 
+A resource isn't created until every resource it references is ready, even if the data it
+reads already exists, so the subnet and security group wait for the VPC's `readyWhen`.
+
 This example does not use `function-auto-ready` in its pipeline because we are
 exclusively using `readyWhen` statements for each resource. Crossplane will
 automatically detect that the parent XR is ready when all composed resources
@@ -184,7 +187,8 @@ This example demonstrates two ways to reference existing resources using `extern
 2. **External collection ref** — select multiple ConfigMaps by label selector to aggregate
    notification subscriber data using CEL list functions (`size()`, `map()`, `exists()`).
    The label value itself uses a CEL expression (`${schema.metadata.name}`) so the
-   selector dynamically matches ConfigMaps for the specific XR instance.
+   selector dynamically matches ConfigMaps for the specific XR instance. A `matchExpressions`
+   entry also leaves out subscribers that have paused their subscription.
 
 The VPC, subnet, and security group source their configuration from the single external
 ConfigMap. The XR status additionally surfaces aggregated data from all subscriber
@@ -214,8 +218,9 @@ We can see the platform configuration pulled from the single external ConfigMap:
 kubectl get networkingstack.externalref.example.crossplane.io/cool-network -o json | jq '.status.platformConfig'
 ```
 
-The notification data is aggregated from all external subscriber ConfigMaps matching the
-`notification-channel: cool-network` label. The `subscriberCount`, `teams`, and
+The notification data is aggregated from the external subscriber ConfigMaps matching the
+`notification-channel: cool-network` label. The QA team's ConfigMap has that label too, but
+its `subscription: paused` label excludes it. The `subscriberCount`, `teams`, and
 `hasOncall` fields are computed using CEL list functions across the entire collection:
 ```shell
 kubectl get networkingstack.externalref.example.crossplane.io/cool-network -o json | jq '.status.notifications'
@@ -367,6 +372,10 @@ crossplane resource trace -w coolsecret.core.example.crossplane.io/cool-secret
 
 ```shell
 kubectl delete -f core/xr.yaml
+kubectl get secret -l crossplane.io/composite=cool-secret
+```
+
+```shell
 kubectl delete -f core/composition.yaml
 kubectl delete -f core/xrd.yaml
 ```
@@ -413,6 +422,10 @@ kubectl get app.example.crossplane.io/my-app -o json | jq '.status | {replicas, 
 
 ```shell
 kubectl delete -f app/xr.yaml
+kubectl get deployment,service -l crossplane.io/composite=my-app
+```
+
+```shell
 kubectl delete -f app/composition.yaml
 kubectl delete -f app/xrd.yaml
 ```
@@ -466,9 +479,68 @@ kubectl exec deploy/$(kubectl get deployment -l crossplane.io/composite=my-app -
 
 ```shell
 kubectl delete -f context/xr.yaml
+kubectl get deployment,configmap -l crossplane.io/composite=my-app
+```
+
+```shell
 kubectl delete -f context/environmentconfig.yaml
 kubectl delete -f context/composition.yaml
 kubectl delete -f context/xrd.yaml
+```
+
+## Conditions Example
+
+This example demonstrates setting custom conditions on the XR. An `App` XR
+composes a native Kubernetes `Deployment` and `Service`, and the ResourceGraph's
+`status.conditions` declares three conditions with `runtime.newCondition`:
+
+- `DeploymentAvailable` is `True` once the Deployment reports it's available,
+  with a message counting its available replicas.
+- `ServiceAddressAssigned` reads the Service's cluster IP. A condition that reads
+  data that doesn't exist yet is left off the XR, so this one appears once the
+  Service has an IP.
+- `AllResourcesReady` reads `runtime.condition(schema, 'ResourcesReady')`, which
+  is `True` when every composed resource is ready.
+
+Crossplane owns the `Ready`, `Synced`, `Healthy`, `UpToDate`, and `Responsive`
+condition types, so function-kro won't set a custom condition with one of those
+names. It returns a warning instead. This example needs no cloud provider or
+credentials.
+
+Create the `App` XRD and composition:
+```shell
+kubectl apply -f conditions/xrd.yaml
+kubectl apply -f conditions/composition.yaml
+```
+
+Create an `App` instance:
+```shell
+kubectl apply -f conditions/xr.yaml
+```
+
+Watch the `App` become ready once the Deployment and Service satisfy their
+`readyWhen` conditions:
+```shell
+crossplane resource trace -w app.conditions.example.crossplane.io/my-app
+```
+
+Once the `App` is ready, confirm all three custom conditions are `True`.
+`DeploymentAvailable` reports `2 of 2 replicas available`, and
+`ServiceAddressAssigned` reports the Service's cluster IP and port:
+```shell
+kubectl get app.conditions.example.crossplane.io/my-app -o json | jq '.status.conditions[] | select(.type | IN("DeploymentAvailable", "ServiceAddressAssigned", "AllResourcesReady")) | {type, status, message}'
+```
+
+### Clean-up
+
+```shell
+kubectl delete -f conditions/xr.yaml
+kubectl get deployment,service -l crossplane.io/composite=my-app
+```
+
+```shell
+kubectl delete -f conditions/composition.yaml
+kubectl delete -f conditions/xrd.yaml
 ```
 
 ## Collection Limits Example

@@ -1,0 +1,28 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: apps.conditions.example.crossplane.io
+spec:
+  scope: Namespaced
+  group: conditions.example.crossplane.io
+  names:
+    kind: App
+    plural: apps
+  versions:
+  - name: v1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              image:
+                description: The app's OCI container image.
+                type: string
+            required:
+            - image
+          status:
+            type: object

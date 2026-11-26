@@ -7,8 +7,16 @@ import (
 	"maps"
 	"strings"
 
+	xpv1 "github.com/crossplane/crossplane/apis/v2/apiextensions/v1"
+	xpv2 "github.com/crossplane/crossplane/apis/v2/core/v2"
 	"github.com/gobuffalo/flect"
 	"github.com/kubernetes-sigs/kro/api/v1alpha1"
+	"github.com/kubernetes-sigs/kro/pkg/cel"
+	"github.com/kubernetes-sigs/kro/pkg/graph"
+	"github.com/kubernetes-sigs/kro/pkg/graphengine/compiler"
+	"github.com/kubernetes-sigs/kro/pkg/graphengine/rgdadapter"
+	"github.com/kubernetes-sigs/kro/pkg/graphengine/runtime"
+	"github.com/kubernetes-sigs/kro/pkg/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -21,35 +29,30 @@ import (
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
-	"github.com/crossplane/crossplane-runtime/v2/pkg/fieldpath"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/request"
 	"github.com/crossplane/function-sdk-go/resource"
-	"github.com/crossplane/function-sdk-go/resource/composed"
 	"github.com/crossplane/function-sdk-go/resource/composite"
 	"github.com/crossplane/function-sdk-go/response"
 
 	input "github.com/crossplane-contrib/function-kro/input/v1alpha1"
-	"github.com/crossplane-contrib/function-kro/kro/cel"
-	"github.com/crossplane-contrib/function-kro/kro/graph"
-	schemaresolver "github.com/crossplane-contrib/function-kro/kro/graph/schema/resolver"
-	"github.com/crossplane-contrib/function-kro/kro/metadata"
-	"github.com/crossplane-contrib/function-kro/kro/runtime"
+	schemaresolver "github.com/crossplane-contrib/function-kro/internal/schemaresolver"
+	"github.com/crossplane-contrib/function-kro/kro/graphengine/executor"
 )
 
-// Function returns whatever response you ask it to.
+// Function runs a KRO ResourceGraph as a Crossplane composition function.
 type Function struct {
 	fnv1.UnimplementedFunctionRunnerServiceServer
 
 	log       logging.Logger
-	rgdConfig graph.RGDConfig
+	rgdConfig graph.Config
 }
 
 // NewFunction returns a Function with the supplied configuration. A nil logger
 // defaults to a no-op logger.
-func NewFunction(log logging.Logger, rgdConfig graph.RGDConfig) *Function {
+func NewFunction(log logging.Logger, rgdConfig graph.Config) *Function {
 	if log == nil {
 		log = logging.NewNopLogger()
 	}
@@ -57,7 +60,7 @@ func NewFunction(log logging.Logger, rgdConfig graph.RGDConfig) *Function {
 }
 
 // RunFunction runs the Function.
-func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) { //nolint:gocognit // Readability is better with the logic inline.
+func (f *Function) RunFunction(ctx context.Context, req *fnv1.RunFunctionRequest) (*fnv1.RunFunctionResponse, error) {
 	f.log.Debug("Running function", "tag", req.GetMeta().GetTag(), "advertisesCapabilities", request.AdvertisesCapabilities(req), "capabilities", req.GetMeta().GetCapabilities())
 	rsp := response.To(req, response.DefaultTTL)
 
@@ -80,7 +83,8 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		return rsp, nil
 	}
 
-	// Collect all GVKs we need schemas for, which is the XR and all resource templates.
+	// Collect all GVKs we need schemas for, which is the XR and every resource
+	// template and external ref.
 	xrGVK := schema.FromAPIVersionAndKind(oxr.Resource.GetAPIVersion(), oxr.Resource.GetKind())
 	gvks, err := collectGVKs(xrGVK, rg.Resources)
 	if err != nil {
@@ -104,28 +108,35 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	}
 
 	// Expose the function context to CEL as schema.context. Context keys and
-	// values are whatever earlier pipeline steps wrote, so we can't type them.
-	// Values are nullable so a template that reads through a key whose value
-	// is null leaves its resource pending instead of failing evaluation.
+	// values are whatever earlier pipeline steps wrote, so we can't give them
+	// a schema. Values are nullable, so if a template reads a field under a
+	// context key whose value is null, its resource waits instead of failing.
 	xrSchema.Properties["context"] = spec.Schema{
-		SchemaProps: spec.SchemaProps{
-			Type: []string{"object"},
-			AdditionalProperties: &spec.SchemaOrBool{
-				Schema: &spec.Schema{
-					SchemaProps: spec.SchemaProps{Nullable: true},
-					VendorExtensible: spec.VendorExtensible{
-						Extensions: spec.Extensions{cel.XKubernetesPreserveUnknownFields: true},
-					},
-				},
+		Type: []string{"object"},
+		AdditionalProperties: &spec.SchemaOrBool{
+			Schema: &spec.Schema{
+				Nullable:   true,
+				Extensions: spec.Extensions{cel.XKubernetesPreserveUnknownFields: true},
 			},
 		},
 	}
 
-	// Build the KRO graph using the schema resolver.
-	gb := graph.NewBuilder(resolver)
-	g, err := gb.NewResourceGraphDefinition(rg, xrSchema, f.rgdConfig)
+	// KRO limits how many dimensions a forEach can have when it validates an
+	// RGD, which we don't run, so we check it here.
+	for _, r := range rg.Resources {
+		if len(r.ForEach) > f.rgdConfig.MaxCollectionDimensionSize {
+			response.Fatal(rsp, errors.Errorf("resource %q: forEach cannot have more than %d dimensions, got %d", r.ID, f.rgdConfig.MaxCollectionDimensionSize, len(r.ForEach)))
+			return rsp, nil
+		}
+	}
+
+	// Wrap the input as a KRO ResourceGraphDefinition, and tell KRO which kinds
+	// are namespaced.
+	xr := &oxr.Resource.Unstructured
+	rgd := resourceGraphDefinition(rg, xr)
+	rm, err := restMapperFor(xr, rg.Resources)
 	if err != nil {
-		response.Fatal(rsp, errors.Wrap(err, "cannot create resource graph"))
+		response.Fatal(rsp, errors.Wrap(err, "cannot get REST mapper"))
 		return rsp, nil
 	}
 
@@ -141,90 +152,87 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		response.Fatal(rsp, errors.Wrap(err, "cannot decode context object"))
 		return rsp, nil
 	}
-	xrc := oxr.Resource.Unstructured.DeepCopy()
+	xrc := xr.DeepCopy()
 	xrc.Object["context"] = fnContext.Object
 
-	// Create the KRO runtime from the graph and XR
-	rt, err := runtime.FromGraph(g, xrc, f.rgdConfig)
+	// Create the KRO runtime from the graph and XR. This will perform a type
+	// check on every CEL expression against the XR's schema, including the
+	// context property we added above.
+	c, err := newXRSchemaCompiler(compiler.NewCompilerWithDependencies(&schemalessStatusResolver{SchemaResolver: resolver, gvk: xrGVK}, rm), rgd, xrSchema)
+	if err != nil {
+		response.Fatal(rsp, errors.Wrap(err, "cannot create compiler"))
+		return rsp, nil
+	}
+	rt, _, err := rgdadapter.BuildRuntimeForInstance(rgd, xr, c,
+		runtime.WithMaxCollectionSize(f.rgdConfig.MaxCollectionSize),
+		// Read schema.* from the copy of the XR with the context. Otherwise KRO
+		// reads only the XR's standard fields like apiVersion, kind, metadata,
+		// spec and status, and leaves out the context we added.
+		runtime.WithNodeObjectOverride(rgdadapter.SchemaNodeID, xrc))
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot create graph runtime"))
 		return rsp, nil
 	}
 
-	// Build a map from node ID to node for easy lookups later on.
-	nodesByID := make(map[string]*runtime.Node)
-	for _, node := range rt.Nodes() {
-		nodesByID[node.Spec.Meta.ID] = node
-	}
-
-	// Process all external references in the input, matching them to required
-	// resources that Crossplane provided to us and setting that observed state
-	// on their corresponding nodes in the runtime so KRO can use their data later on.
-	for _, r := range rg.Resources {
-		if r.ExternalRef == nil {
-			// not an external reference, skip it
-			continue
-		}
-
-		// get the required resource(s) that Crossplane provided to us for this external reference
-		resources, ok, err := request.GetRequiredResource(req, r.ID)
-		if err != nil {
-			response.Fatal(rsp, errors.Wrapf(err, "cannot get external resource %q", r.ID))
+	// KRO needs the API server to look up an apiVersion or kind computed by a
+	// CEL expression, so we don't support them.
+	for _, n := range rt.Nodes() {
+		if n.DynamicGVK() {
+			response.Fatal(rsp, errors.Errorf("resource %q: CEL expressions in apiVersion or kind are not supported", n.ID()))
 			return rsp, nil
 		}
-		if !ok || len(resources) == 0 {
-			f.log.Debug("External resource not available yet", "id", r.ID)
-			continue
-		}
-
-		// set the resource(s) observed state on the runtime node, so KRO has access to it for later evaluations etc.
-		if node, ok := nodesByID[r.ID]; ok {
-			observed := make([]*unstructured.Unstructured, len(resources))
-			for i, res := range resources {
-				observed[i] = res.Resource
-			}
-			// make sure all observed objects are decoded in the format KRO expects
-			if err := decodeAsK8sAPI(observed...); err != nil {
-				response.Fatal(rsp, errors.Wrapf(err, "cannot decode external resources for %q as Kubernetes API objects", r.ID))
-				return rsp, nil
-			}
-			f.log.Debug("SetObserved external ref", "id", r.ID, "externalRef", r.ExternalRef, "count", len(observed))
-			node.SetObserved(observed)
-		}
 	}
 
-	// Find all external references from the runtime so we can include them in the
-	// response's required resources. Basically, we'll get Crossplane to look up
-	// external references in the control plane for us.
-	externalRefSelectors, err := f.externalRefSelectorsFromRuntime(rt, oxr.Resource.GetNamespace())
+	// Gather the external resources Crossplane fetched for our external refs.
+	required, err := requiredExternalResources(req, rg.Resources)
 	if err != nil {
-		response.Fatal(rsp, errors.Wrap(err, "cannot build external resource selectors"))
+		response.Fatal(rsp, err)
 		return rsp, nil
 	}
-	if rsp.Requirements.Resources == nil {
-		rsp.Requirements.Resources = make(map[string]*fnv1.ResourceSelector)
-	}
-	maps.Copy(rsp.GetRequirements().GetResources(), externalRefSelectors)
 
-	// get the observed composed resources
+	// Group observed composed resources by their runtime node ID.
 	ocds, err := request.GetObservedComposedResources(req)
 	if err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot get observed composed resources"))
 		return rsp, nil
 	}
-
-	// Group observed composed resources by their runtime node ID.
-	observedByNodeID := groupObservedByNodeID(f.log, ocds, nodesByID)
-
-	// Set observed state on each node so the KRO runtime has access to all its
-	// observed fields/values to use when evaluating expressions.
-	for id, observed := range observedByNodeID {
-		// make sure all observed objects are decoded in the format KRO expects
-		if err := decodeAsK8sAPI(observed...); err != nil {
+	observed := groupObservedByNodeID(f.log, ocds, rt)
+	for id, objs := range observed {
+		if err := decodeAsK8sAPI(objs...); err != nil {
 			response.Fatal(rsp, errors.Wrapf(err, "cannot decode observed composed resources for %q as Kubernetes API objects", id))
 			return rsp, nil
 		}
-		nodesByID[id].SetObserved(observed)
+	}
+
+	// Process all resources in dependency order, generating the desired
+	// composed resources.
+	e := executor.NewCrossplane(observed, required)
+	err = e.Apply(ctx, rt)
+
+	// Ask Crossplane to fetch the external resources this run referenced. A
+	// reference whose name or selector reads data that doesn't exist yet isn't
+	// asked for yet.
+	if rsp.GetRequirements().GetResources() == nil {
+		rsp.Requirements.Resources = make(map[string]*fnv1.ResourceSelector)
+	}
+	maps.Copy(rsp.GetRequirements().GetResources(), e.ExternalRefSelectors)
+
+	// A resource that can't be rendered would be left out of desired state and
+	// deleted by Crossplane. Fail instead, so Crossplane leaves everything as it
+	// is.
+	//
+	// If we're still waiting on Crossplane to fetch an external ref though, we
+	// don't fail yet, because Crossplane won't fetch anything for us after a
+	// fatal result. The resource we couldn't render isn't in e.Desired, so this
+	// response leaves it out. That's fine, because Crossplane will fetch the ref,
+	// call us again, and only use the response from that last call.
+	if err != nil && !stderrors.Is(err, executor.ErrNotReady) && !fetching(e.ExternalRefSelectors, required) {
+		response.Fatal(rsp, err)
+		return rsp, nil
+	}
+	allReady := err == nil
+	if !allReady {
+		f.log.Debug("Resources not ready yet", "reason", err)
 	}
 
 	dcds, err := request.GetDesiredComposedResources(req)
@@ -232,13 +240,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 		response.Fatal(rsp, errors.Wrap(err, "cannot get desired composed resources"))
 		return rsp, nil
 	}
-
-	// Process all runtime nodes in topological order, generating the entire set of desired composed resources.
-	if err := buildDesiredComposed(f.log, rt, dcds); err != nil {
-		response.Fatal(rsp, err)
-		return rsp, nil
-	}
-
+	maps.Copy(dcds, e.Desired)
 	if err := response.SetDesiredComposedResources(rsp, dcds); err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot set desired composed resources"))
 		return rsp, nil
@@ -247,16 +249,19 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1.RunFunctionRequest) 
 	// Build a minimal desired XR containing only the status paths declared in
 	// the ResourceGraph. This is critical for SSA - we must only include fields
 	// we want to own.
-	dxr, err := buildDesiredXRStatus(rt, g, oxr)
-	if err != nil {
-		response.Fatal(rsp, err)
-		return rsp, nil
+	dxr := &composite.Unstructured{Object: map[string]any{}}
+	dxr.SetAPIVersion(xr.GetAPIVersion())
+	dxr.SetKind(xr.GetKind())
+	if len(e.Status) > 0 {
+		dxr.Object["status"] = e.Status
 	}
-
 	if err := response.SetDesiredCompositeResource(rsp, &resource.Composite{Resource: dxr}); err != nil {
 		response.Fatal(rsp, errors.Wrap(err, "cannot set desired composite resource"))
 		return rsp, nil
 	}
+
+	// evaluate custom conditions and include them in the response
+	setAuthorConditions(f.log, rsp, rt, rgd, allReady)
 
 	return rsp, nil
 }
@@ -471,127 +476,45 @@ func (f *Function) buildResolverFromCRDs(req *fnv1.RunFunctionRequest, gvks []sc
 	return combinedResolver, xrSchema, nil
 }
 
-// externalRefSelectorsFromRuntime builds resource selectors for external references
-// by using the KRO runtime to evaluate CEL expressions in metadata fields.
-// This allows external ref names/namespaces to use expressions like ${schema.spec.configMapName}.
-// The namespace defaults to the XR namespace if not specified, following KRO semantics.
-//
-// If an external ref's identity cannot be resolved yet (e.g., it depends on another
-// resource that isn't observed), it's skipped and will be resolved on a subsequent
-// invocation. This handles the multi-phase execution model of Crossplane functions.
-func (f *Function) externalRefSelectorsFromRuntime(rt *runtime.Runtime, xrNamespace string) (map[string]*fnv1.ResourceSelector, error) {
-	selectors := make(map[string]*fnv1.ResourceSelector)
-
-	for _, node := range rt.Nodes() {
-		if node.Spec.Meta.Type != graph.NodeTypeExternal && node.Spec.Meta.Type != graph.NodeTypeExternalCollection {
-			// not an external ref, skip it
-			continue
-		}
-
-		if node.Spec.Meta.Type == graph.NodeTypeExternalCollection {
-			// attempt to build selectors for this external collection
-			selector, err := externalCollectionSelector(node)
-			if err != nil {
-				if runtime.IsDataPending(err) {
-					f.log.Debug("External collection not resolvable yet, skipping", "id", node.Spec.Meta.ID)
-					continue
-				}
-				return nil, errors.Wrapf(err, "cannot build selector for external collection %q", node.Spec.Meta.ID)
-			}
-			if selector != nil {
-				// we got a fully formed selector for this external collection, add it the list
-				selectors[node.Spec.Meta.ID] = selector
-			}
-			continue
-		}
-
-		// Use GetDesiredIdentity to evaluate CEL expressions in metadata.name/namespace.
-		// This only resolves identity fields and doesn't require other dependencies to be ready.
-		desired, err := node.GetDesiredIdentity()
-		if err != nil {
-			// If data is pending (dependency not yet observed), skip this external ref.
-			// It will be resolved on a subsequent invocation when the dependency is available.
-			// This is expected during multi-phase function execution.
-			if runtime.IsDataPending(err) {
-				f.log.Debug("External ref identity not resolvable yet, skipping", "id", node.Spec.Meta.ID)
-				continue
-			}
-			// Other errors (e.g., invalid CEL expression) are fatal.
-			return nil, errors.Wrapf(err, "cannot resolve identity for external ref %q", node.Spec.Meta.ID)
-		}
-
-		if len(desired) == 0 {
-			continue
-		}
-
-		template := desired[0]
-		namespace := template.GetNamespace()
-		if namespace == "" {
-			namespace = xrNamespace
-		}
-
-		selectors[node.Spec.Meta.ID] = &fnv1.ResourceSelector{
-			ApiVersion: template.GetAPIVersion(),
-			Kind:       template.GetKind(),
-			Match: &fnv1.ResourceSelector_MatchName{
-				MatchName: template.GetName(),
-			},
-			Namespace: &namespace,
-		}
+// requiredExternalResources returns the resources Crossplane fetched for each
+// external ref, by resource ID. A ref Crossplane hasn't answered yet has no
+// entry.
+func requiredExternalResources(req *fnv1.RunFunctionRequest, resources []*v1alpha1.Resource) (map[string][]*unstructured.Unstructured, error) {
+	all, err := request.GetRequiredResources(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot get required resources")
 	}
-
-	return selectors, nil
+	out := map[string][]*unstructured.Unstructured{}
+	for _, r := range resources {
+		if r.ExternalRef == nil {
+			continue
+		}
+		found, ok := all[r.ID]
+		if !ok {
+			continue
+		}
+		objs := make([]*unstructured.Unstructured, len(found))
+		for i := range found {
+			objs[i] = found[i].Resource
+		}
+		if err := decodeAsK8sAPI(objs...); err != nil {
+			return nil, errors.Wrapf(err, "cannot decode external resources for %q as Kubernetes API objects", r.ID)
+		}
+		out[r.ID] = objs
+	}
+	return out, nil
 }
 
-// externalCollectionSelector resolves an external collection node's template and
-// extracts the label selector to build a Crossplane ResourceSelector with MatchLabels.
-func externalCollectionSelector(node *runtime.Node) (*fnv1.ResourceSelector, error) {
-	// compute/resolve all the expressions in this external collection's template
-	desired, err := node.GetDesired()
-	if err != nil {
-		return nil, err
+// fetching returns true if we've asked Crossplane for an external ref that it
+// hasn't fetched for us yet. A ref that Crossplane looked for but didn't find
+// still comes back to us as an empty entry, so we don't count that one.
+func fetching(selectors map[string]*fnv1.ResourceSelector, required map[string][]*unstructured.Unstructured) bool {
+	for id := range selectors {
+		if _, ok := required[id]; !ok {
+			return true
+		}
 	}
-	if len(desired) == 0 {
-		return nil, nil
-	}
-	template := desired[0]
-
-	// extract the selector from the unstructured data
-	selectorRaw, found, err := unstructured.NestedMap(template.Object, "metadata", "selector")
-	if err != nil {
-		return nil, errors.Wrap(err, "cannot extract selector from resolved template")
-	}
-	if !found {
-		return nil, errors.New("resolved template has no selector")
-	}
-
-	ls := &metav1.LabelSelector{}
-	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(selectorRaw, ls); err != nil {
-		return nil, errors.Wrapf(err, "cannot convert selector")
-	}
-
-	labels := make(map[string]string)
-	if ls.MatchLabels != nil {
-		maps.Copy(labels, ls.MatchLabels)
-	}
-
-	selector := &fnv1.ResourceSelector{
-		ApiVersion: template.GetAPIVersion(),
-		Kind:       template.GetKind(),
-		Match: &fnv1.ResourceSelector_MatchLabels{
-			MatchLabels: &fnv1.MatchLabels{
-				Labels: labels,
-			},
-		},
-	}
-
-	// Namespace: if explicitly set, use it. If empty, omit entirely
-	// to match all namespaces (per Crossplane's ResourceSelector semantics).
-	if ns := template.GetNamespace(); ns != "" {
-		selector.Namespace = &ns
-	}
-
-	return selector, nil
+	return false
 }
 
 // groupObservedByNodeID groups observed composed resources by their runtime
@@ -599,18 +522,18 @@ func externalCollectionSelector(node *runtime.Node) (*fnv1.ResourceSelector, err
 // For collections, the composed resource name uses the pattern
 // "collectionNodeID-metadataName" (e.g., "subnets-my-app-us-east-1") and has
 // the kro.run/collection-index label set.
-func groupObservedByNodeID(log logging.Logger, ocds map[resource.Name]resource.ObservedComposed, nodesByID map[string]*runtime.Node) map[string][]*unstructured.Unstructured {
+func groupObservedByNodeID(log logging.Logger, ocds map[resource.Name]resource.ObservedComposed, rt *runtime.Runtime) map[string][]*unstructured.Unstructured {
 	observedByNodeID := make(map[string][]*unstructured.Unstructured)
 	for name, r := range ocds {
 		id := string(name) // ID is the same as the composed resource name
-		if _, ok := nodesByID[id]; ok {
+		if n := rt.Node(id); n != nil && n.Kind() == compiler.NodeKindTemplate {
 			// found a direct match node for this ID
 			observedByNodeID[id] = append(observedByNodeID[id], &r.Resource.Unstructured)
 			continue
 		}
 		if _, isCollectionItem := r.Resource.GetLabels()[metadata.CollectionIndexLabel]; isCollectionItem {
 			// this is a collection item, try to find its parent collection node
-			if parentNodeID := findCollectionNodeID(id, nodesByID); parentNodeID != "" {
+			if parentNodeID := findCollectionNodeID(id, rt); parentNodeID != "" {
 				// we found a matching collection parent, add this observed resource to its parent's list
 				observedByNodeID[parentNodeID] = append(observedByNodeID[parentNodeID], &r.Resource.Unstructured)
 				continue
@@ -628,7 +551,7 @@ func groupObservedByNodeID(log logging.Logger, ocds map[resource.Name]resource.O
 // by trying progressively shorter "-" delimited prefixes of the resource name.
 // This naturally finds the longest match and avoids ambiguity when one node ID
 // is a prefix of another (e.g., "bucket" vs "bucket-log").
-func findCollectionNodeID(id string, nodesByID map[string]*runtime.Node) string {
+func findCollectionNodeID(id string, rt *runtime.Runtime) string {
 	// try all segments of the ID from longest to shortest
 	for remaining := id; ; {
 		// find the next longest segment in the resource name
@@ -638,7 +561,7 @@ func findCollectionNodeID(id string, nodesByID map[string]*runtime.Node) string 
 			return ""
 		}
 		prefix := id[:idx]
-		if node, ok := nodesByID[prefix]; ok && (node.Spec.Meta.Type == graph.NodeTypeCollection || node.Spec.Meta.Type == graph.NodeTypeExternalCollection) {
+		if n := rt.Node(prefix); n != nil && n.Kind() == compiler.NodeKindTemplate && n.IsCollection() {
 			// we found a collection node parent that matches the name prefix of this collection item
 			return prefix
 		}
@@ -646,113 +569,58 @@ func findCollectionNodeID(id string, nodesByID map[string]*runtime.Node) string 
 	}
 }
 
-// buildDesiredComposed processes all runtime nodes in topological order,
-// building the desired composed resources map. Collection resources are named
-// "{id}-{metadata.name}" for stable identity across reconciles.
-func buildDesiredComposed(log logging.Logger, rt *runtime.Runtime, dcds map[resource.Name]*resource.DesiredComposed) error { //nolint:gocognit // Readability is better with the logic inline.
-	for _, node := range rt.Nodes() {
-		id := node.Spec.Meta.ID
-
-		// External refs are read-only and not managed by this function or Crossplane.
-		// Skip them from desired output.
-		if node.Spec.Meta.Type == graph.NodeTypeExternal || node.Spec.Meta.Type == graph.NodeTypeExternalCollection {
-			log.Debug("Not including external ref in desired resources", "id", id)
-			continue
-		}
-
-		// Check if this node should be ignored (includeWhen evaluated to false).
-		ignored, err := node.IsIgnored()
-		if err != nil {
-			log.Info("Error checking if resource is ignored", "id", id, "err", err)
-			continue
-		}
-		if ignored {
-			log.Debug("Not including ignored resource in desired resources", "id", id)
-			continue
-		}
-
-		// Get the desired state with CEL expressions resolved.
-		// This is critical for SSA - desired state must only contain fields
-		// we want to own, not provider-defaulted fields from observed state.
-		desired, err := node.GetDesired()
-		if err != nil {
-			if runtime.IsDataPending(err) {
-				log.Debug("Not including resource with pending data in desired resources", "id", id)
-				continue
-			}
-			return errors.Wrapf(err, "cannot get desired state for resource %q", id)
-		}
-
-		// For single resources, desired has one element.
-		// For collections, desired has multiple elements (one per forEach expansion).
-		isCollection := node.Spec.Meta.Type == graph.NodeTypeCollection
-		for _, r := range desired {
-			resourceName := id
-			if isCollection {
-				// This resource is part of a collection: append the resource's metadata.name
-				// to produce a stable composed resource name that doesn't depend on list order.
-				resourceName = id + "-" + r.GetName()
-			}
-
-			cd, err := composed.From(r)
-			if err != nil {
-				return errors.Wrapf(err, "cannot create composed resource from template id %s", id)
-			}
-
-			// add the resource to the desired composed resources and set its
-			// ready state. If readyWhen expressions are defined, we explicitly
-			// set ReadyTrue/ReadyFalse based on their evaluation. If no
-			// readyWhen is defined, we leave readiness as ReadyUnspecified so
-			// that later functions in the pipeline (like function-auto-ready)
-			// can determine readiness using their own logic.
-			readyState := resource.ReadyUnspecified
-			if len(node.Spec.ReadyWhen) > 0 {
-				readyState = resource.ReadyFalse
-				if err := node.CheckReadiness(); err != nil {
-					if !stderrors.Is(err, runtime.ErrWaitingForReadiness) {
-						log.Info("Error checking resource readiness", "id", id, "err", err)
-					}
-				} else {
-					readyState = resource.ReadyTrue
-				}
-			}
-			log.Debug("Resource ready state", "id", id, "ready", readyState)
-			dcds[resource.Name(resourceName)] = &resource.DesiredComposed{Resource: cd, Ready: readyState}
-		}
+// setAuthorConditions evaluates the conditions block of the ResourceGraph's
+// status (runtime.newCondition(...) expressions) and sets each resulting
+// condition on the XR.
+func setAuthorConditions(log logging.Logger, rsp *fnv1.RunFunctionResponse, rt *runtime.Runtime, rgd *v1alpha1.ResourceGraphDefinition, allReady bool) {
+	status := metav1.ConditionFalse
+	if allReady {
+		status = metav1.ConditionTrue
 	}
 
-	return nil
-}
+	// runtime.condition(schema, ...) reads KRO's built-in instance conditions,
+	// which a function doesn't compute, so we approximate them from this run.
+	// GraphResolved is always True, because we only get here once the graph has
+	// compiled and run without a hard error. ResourcesReady and Ready are True
+	// once every resource is ready. InstanceManaged is about KRO's own
+	// finalizers and labels, so we leave it out.
+	builtins := []v1alpha1.Condition{
+		{Type: v1alpha1.InstanceConditionTypeGraphResolved, Status: metav1.ConditionTrue},
+		{Type: v1alpha1.InstanceConditionTypeResourcesReady, Status: status},
+		{Type: v1alpha1.InstanceConditionTypeReady, Status: status},
+	}
 
-// buildDesiredXRStatus builds a minimal desired XR containing only the resolved
-// status paths declared in the ResourceGraph. This is critical for SSA - we
-// must only include fields we want to own.
-func buildDesiredXRStatus(rt *runtime.Runtime, g *graph.Graph, oxr *resource.Composite) (*composite.Unstructured, error) {
-	dxr := &composite.Unstructured{Unstructured: unstructured.Unstructured{Object: map[string]any{}}}
-	dxr.SetAPIVersion(oxr.Resource.GetAPIVersion())
-	dxr.SetKind(oxr.Resource.GetKind())
-
-	instanceDesired, err := rt.Instance().GetDesired()
+	// A condition that's waiting for data, or whose expression fails, is left
+	// out. Crossplane only updates the conditions we return, so it keeps its
+	// last value on the XR.
+	conds, incomplete, err := rgdadapter.ProjectInstanceConditions(rt, rgd, builtins, 0)
 	if err != nil {
-		return nil, errors.Wrap(err, "cannot get desired instance status")
+		response.Warning(rsp, errors.Wrap(err, "cannot evaluate status conditions"))
 	}
-
-	if len(instanceDesired) > 0 && instanceDesired[0] != nil {
-		src := fieldpath.Pave(instanceDesired[0].Object)
-		dst := fieldpath.Pave(dxr.Object)
-		for _, v := range g.Instance.Variables {
-			val, err := src.GetValue(v.Path)
-			if err != nil {
-				// Value not resolved yet (CEL dependency not satisfied), skip it.
-				continue
-			}
-			if err := dst.SetValue(v.Path, val); err != nil {
-				return nil, errors.Wrapf(err, "cannot set desired XR status field %q", v.Path)
-			}
+	if incomplete {
+		log.Debug("Some status conditions are waiting for data")
+	}
+	for _, c := range conds {
+		if xpv1.IsSystemConditionType(xpv2.ConditionType(c.ConditionType)) {
+			// Crossplane sets these itself, and ignores them from a function.
+			response.Warning(rsp, errors.Errorf("cannot set condition %q: Crossplane reserves this condition type", c.ConditionType))
+			continue
 		}
-	}
 
-	return dxr, nil
+		var opt *response.ConditionOption
+		switch metav1.ConditionStatus(c.Status) { //nolint:exhaustive // anything else is Unknown
+		case metav1.ConditionTrue:
+			opt = response.ConditionTrue(rsp, c.ConditionType, c.Reason)
+		case metav1.ConditionFalse:
+			opt = response.ConditionFalse(rsp, c.ConditionType, c.Reason)
+		default:
+			opt = response.ConditionUnknown(rsp, c.ConditionType, c.Reason)
+		}
+		if c.Message != "" {
+			opt = opt.WithMessage(c.Message)
+		}
+		opt.TargetComposite()
+	}
 }
 
 // structToSpecSchema converts a protobuf Struct (as returned by Crossplane's

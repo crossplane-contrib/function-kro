@@ -3,7 +3,6 @@
 # clusterIP. Supplying these populates the aggregated status (replicas, address)
 # and satisfies the readyWhen conditions. Resources match composition nodes by
 # the crossplane.io/composition-resource-name annotation.
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -1,0 +1,68 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "conditions.example.crossplane.io",
+    "version": "v1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "io.crossplane.example.conditions.v1.App": {
+        "type": "object",
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "image": {
+                "description": "The app's OCI container image.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "image"
+            ]
+          },
+          "status": {
+            "type": "object"
+          },
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-kubernetes-group-version-kind": [
+          {
+            "group": "conditions.example.crossplane.io",
+            "version": "v1",
+            "kind": "App"
+          }
+        ]
+      }
+    }
+  }
+}

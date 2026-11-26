@@ -1,5 +1,5 @@
 # These ConfigMaps represent teams that subscribe to notifications about
-# networking stack changes. The composition selects them all using a label
+# networking stack changes. The composition selects them using a label
 # selector (externalRef with metadata.selector), demonstrating how external
 # collection refs aggregate data from multiple existing resources.
 apiVersion: v1
@@ -36,4 +36,19 @@ metadata:
 data:
   team: dev
   email: dev@example.com
+  oncall: "false"
+---
+# This team paused its subscription, so the composition's matchExpressions
+# leaves it out even though its notification-channel label matches.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: subscriber-qa-team
+  namespace: default
+  labels:
+    notification-channel: cool-network  # matches ${schema.metadata.name} from the XR
+    subscription: paused
+data:
+  team: qa
+  email: qa@example.com
   oncall: "false"

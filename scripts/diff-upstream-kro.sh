@@ -17,7 +17,7 @@
 # Examples:
 #   ./scripts/diff-upstream-kro.sh                          # Full diff against main
 #   ./scripts/diff-upstream-kro.sh -r v0.7.1                # Diff against tag v0.7.1
-#   ./scripts/diff-upstream-kro.sh -f graph/builder.go      # Diff only builder.go
+#   ./scripts/diff-upstream-kro.sh -f graphengine/executor/simple.go  # Diff only simple.go
 #   ./scripts/diff-upstream-kro.sh -s                       # Summary only
 #
 
@@ -56,8 +56,8 @@ LOCAL_INPUT_PREFIX="github.com/crossplane-contrib/function-kro/input/v1alpha1"
 UPSTREAM_INPUT_PREFIX="sigs.k8s.io/kro/api/v1alpha1"
 
 # Upstream packages we vendor (only show upstream-only files from these)
-# Everything else in upstream (controllers, simpleschema, etc.) is intentionally excluded.
-VENDORED_PACKAGES="graph/ cel/ runtime/ metadata/"
+# Everything else in upstream we import as a Go module, or don't use at all.
+VENDORED_PACKAGES="graphengine/executor/"
 
 usage() {
     head -30 "$0" | grep -E '^#' | sed 's/^# \?//'
@@ -159,6 +159,14 @@ setup_upstream() {
         log_error "Upstream pkg/ directory not found at $UPSTREAM_PKG_DIR"
         exit 1
     fi
+
+    # Report what's actually checked out rather than what was asked for: -u
+    # never checks out --ref, and a failed clone of --ref falls back to the
+    # default branch.
+    GIT_REF=$(git -C "$UPSTREAM_DIR" describe --tags --exact-match 2>/dev/null ||
+        git -C "$UPSTREAM_DIR" symbolic-ref --short -q HEAD 2>/dev/null ||
+        git -C "$UPSTREAM_DIR" rev-parse --short HEAD 2>/dev/null ||
+        echo "unknown")
 
     log_info "Comparing against upstream ref: $GIT_REF"
 }

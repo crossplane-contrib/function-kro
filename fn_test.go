@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/kubernetes-sigs/kro/pkg/features"
+	"github.com/kubernetes-sigs/kro/pkg/graph"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -16,9 +18,6 @@ import (
 	fnv1 "github.com/crossplane/function-sdk-go/proto/v1"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-sdk-go/response"
-
-	"github.com/crossplane-contrib/function-kro/kro/features"
-	"github.com/crossplane-contrib/function-kro/kro/graph"
 )
 
 // buildSchema creates an OpenAPI v3 schema with standard apiVersion, kind, and
@@ -606,6 +605,95 @@ func TestRunFunction(t *testing.T) {
 								"kind": "XBucket",
 								"status": {
 									"bucketName": "test-bucket-xyz"
+								}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"SchemaFieldsResolveIntoStatus": {
+			reason: "Status expressions that read the XR's own fields (schema.*) should resolve into the desired XR status",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"bucketName": "${schema.spec.bucketName}",
+							"regionCount": "${size(schema.spec.regions)}"
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {
+									"bucketName": "my-bucket",
+									"regions": ["us-east-1", "us-west-2"]
+								}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"status": {
+									"bucketName": "my-bucket",
+									"regionCount": 2
 								}
 							}`),
 						},
@@ -1425,6 +1513,252 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
+		"ExternalCollectionEmptyMatch": {
+			reason: "An external collection that matches nothing should be a ready, empty collection, so resources that depend on it are composed",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "configs",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"selector": {
+										"matchLabels": {
+											"app": "${schema.metadata.name}"
+										}
+									}
+								}
+							}
+						}, {
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"replicas": "${size(configs)}"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket", "namespace": "xr-ns"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+					RequiredResources: map[string]*fnv1.Resources{
+						// Crossplane fetched the collection and nothing matched
+						"configs": {Items: []*fnv1.Resource{}},
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+						Resources: map[string]*fnv1.ResourceSelector{
+							"configs": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+								Match: &fnv1.ResourceSelector_MatchLabels{
+									MatchLabels: &fnv1.MatchLabels{
+										Labels: map[string]string{"app": "test-bucket"},
+									},
+								},
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"replicas": 0
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"ExternalCollectionMatchExpressions": {
+			reason: "Crossplane can only select by labels, so an external collection should request its matchLabels and filter what Crossplane fetched by its matchExpressions",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "configs",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"selector": {
+										"matchLabels": {
+											"app": "${schema.metadata.name}"
+										},
+										"matchExpressions": [{
+											"key": "tier",
+											"operator": "In",
+											"values": ["gold"]
+										}]
+									}
+								}
+							}
+						}, {
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"replicas": "${size(configs)}"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket", "namespace": "xr-ns"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+					RequiredResources: map[string]*fnv1.Resources{
+						// Crossplane returns every ConfigMap matching the matchLabels
+						"configs": {
+							Items: []*fnv1.Resource{
+								{
+									Resource: resource.MustStructJSON(`{
+										"apiVersion": "v1",
+										"kind": "ConfigMap",
+										"metadata": {"name": "config-1", "namespace": "xr-ns", "labels": {"app": "test-bucket", "tier": "gold"}}
+									}`),
+								},
+								{
+									Resource: resource.MustStructJSON(`{
+										"apiVersion": "v1",
+										"kind": "ConfigMap",
+										"metadata": {"name": "config-2", "namespace": "xr-ns", "labels": {"app": "test-bucket", "tier": "silver"}}
+									}`),
+								},
+							},
+						},
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+						Resources: map[string]*fnv1.ResourceSelector{
+							// Only the matchLabels are requested
+							"configs": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+								Match: &fnv1.ResourceSelector_MatchLabels{
+									MatchLabels: &fnv1.MatchLabels{
+										Labels: map[string]string{"app": "test-bucket"},
+									},
+								},
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								// Only config-1 has tier=gold
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"replicas": 1
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
 		"IncludeWhenExcludesResource": {
 			reason: "Resources with includeWhen conditions that evaluate to false should be excluded from desired output",
 			args: args{
@@ -1520,6 +1854,253 @@ func TestRunFunction(t *testing.T) {
 									"spec": {
 										"forProvider": {
 											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"IncludeWhenReadsAnotherResource": {
+			reason: "includeWhen can read another resource's observed state, and a resource whose includeWhen is false is left out even though it exists",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}, {
+							"id": "logging",
+							"includeWhen": ["${bucket.status.atProvider.objectCount > 0}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "BucketLogging",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"bucket": "${bucket.metadata.name}",
+										"targetPrefix": "logs/"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							// bucket has no objects, so logging's includeWhen is false
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-abc123"},
+									"spec": {"forProvider": {"region": "us-west-2"}},
+									"status": {"atProvider": {"id": "test-bucket-abc123", "objectCount": 0}}
+								}`),
+							},
+							"logging": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "BucketLogging",
+									"metadata": {"name": "test-bucket-logging-xyz"},
+									"spec": {"forProvider": {"bucket": "test-bucket-abc123", "targetPrefix": "logs/"}}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket":        schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket":        schemaBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": schemaBucketLogging,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "BucketLogging",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+							// logging is left out, so Crossplane deletes it
+						},
+					},
+				},
+			},
+		},
+		"ExistingResourceKeptWhenIncludeWhenWaitsOnData": {
+			reason: "A resource that already exists should still be composed while its includeWhen reads data that isn't there yet, or Crossplane would delete it",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}, {
+							"id": "logging",
+							"includeWhen": ["${bucket.status.atProvider.objectCount > 0}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "BucketLogging",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"bucket": "${bucket.metadata.name}",
+										"targetPrefix": "logs/"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							// bucket has no status yet, so logging's includeWhen can't be evaluated
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-abc123"},
+									"spec": {"forProvider": {"region": "us-west-2"}}
+								}`),
+							},
+							"logging": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "BucketLogging",
+									"metadata": {"name": "test-bucket-logging-xyz"},
+									"spec": {"forProvider": {"bucket": "test-bucket-abc123", "targetPrefix": "logs/"}}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket":        schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket":        schemaBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": schemaBucketLogging,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "BucketLogging",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+							"logging": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "BucketLogging",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"bucket": "test-bucket-abc123",
+											"targetPrefix": "logs/"
 										}
 									}
 								}`),
@@ -1727,6 +2308,666 @@ func TestRunFunction(t *testing.T) {
 									}
 								}`),
 							},
+						},
+					},
+				},
+			},
+		},
+		"DependentWaitsForReadyWhen": {
+			reason: "A resource should not be composed until the resources it depends on satisfy their readyWhen conditions, even when the data it reads is available",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"readyWhen": ["${bucket.status.?atProvider.?id.hasValue()}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}, {
+							"id": "logging",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "BucketLogging",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"bucket": "${bucket.metadata.name}",
+										"targetPrefix": "logs/"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							// bucket has a name, but isn't ready
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-abc123"},
+									"spec": {"forProvider": {"region": "us-west-2"}}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket":        schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket":        schemaBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": schemaBucketLogging,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "BucketLogging",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							// logging waits for bucket to be ready
+							"bucket": {
+								Ready: fnv1.Ready_READY_FALSE,
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"ExistingDependentKeptWhenDependencyNotReady": {
+			reason: "A resource that already exists should still be composed while a resource it depends on is not ready, or Crossplane would delete it",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"readyWhen": ["${bucket.status.?atProvider.?id.hasValue()}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}, {
+							"id": "logging",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "BucketLogging",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"bucket": "${bucket.metadata.name}",
+										"targetPrefix": "logs/"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							// bucket was ready when logging was created, but isn't now
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-abc123"},
+									"spec": {"forProvider": {"region": "us-west-2"}}
+								}`),
+							},
+							"logging": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "BucketLogging",
+									"metadata": {"name": "test-bucket-logging-xyz"},
+									"spec": {"forProvider": {"bucket": "test-bucket-abc123", "targetPrefix": "logs/"}}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket":        schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket":        schemaBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": schemaBucketLogging,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "BucketLogging",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Ready: fnv1.Ready_READY_FALSE,
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+							"logging": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "BucketLogging",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"bucket": "test-bucket-abc123",
+											"targetPrefix": "logs/"
+										}
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"ExistingDependentKeptWhenExternalRefWaitsOnDependency": {
+			reason: "A resource that already exists and reads an external ref should still be composed while the resource the ref's name comes from is not ready, and the ref should still be requested",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "settings",
+							"readyWhen": ["${settings.data.approved == 'true'}"],
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {"name": "settings"},
+								"data": {
+									"sharedConfig": "platform-config",
+									"approved": "false"
+								}
+							}
+						}, {
+							"id": "platform",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"name": "${settings.data.sharedConfig}"
+								}
+							}
+						}, {
+							"id": "app",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {"name": "app"},
+								"data": {
+									"region": "${platform.data.region}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket", "namespace": "xr-ns"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							// settings was ready when app was created, but isn't now
+							"settings": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "settings", "namespace": "xr-ns"},
+									"data": {"sharedConfig": "platform-config", "approved": "false"}
+								}`),
+							},
+							"app": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "app", "namespace": "xr-ns"},
+									"data": {"region": "us-west-2"}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+					RequiredResources: map[string]*fnv1.Resources{
+						"platform": {
+							Items: []*fnv1.Resource{{
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "platform-config", "namespace": "xr-ns"},
+									"data": {"region": "us-west-2"}
+								}`),
+							}},
+						},
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+						Resources: map[string]*fnv1.ResourceSelector{
+							"platform": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "platform-config"},
+								Namespace:  new("xr-ns"),
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"settings": {
+								Ready: fnv1.Ready_READY_FALSE,
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "settings"},
+									"data": {
+										"sharedConfig": "platform-config",
+										"approved": "false"
+									}
+								}`),
+							},
+							"app": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "app"},
+									"data": {
+										"region": "us-west-2"
+									}
+								}`),
+							},
+						},
+					},
+				},
+			},
+		},
+		"ExistingDependentWaitsForExternalRefFetch": {
+			reason: "A resource that already exists and reads an external ref Crossplane hasn't fetched yet should not fail the run, so Crossplane can fetch the ref and call the function again",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "platform",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"name": "platform-config"
+								}
+							}
+						}, {
+							"id": "app",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {"name": "app"},
+								"data": {
+									"region": "${platform.data.region}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket", "namespace": "xr-ns"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"app": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "app", "namespace": "xr-ns"},
+									"data": {"region": "us-west-2"}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+						Resources: map[string]*fnv1.ResourceSelector{
+							"platform": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "platform-config"},
+								Namespace:  new("xr-ns"),
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+					},
+				},
+			},
+		},
+		"ExistingDependentOfMissingExternalRefNotRenderable": {
+			reason: "A resource that already exists and reads an external ref Crossplane fetched but didn't find should return a fatal result, rather than being left out of desired state and deleted by Crossplane",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "platform",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"name": "platform-config"
+								}
+							}
+						}, {
+							"id": "app",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {"name": "app"},
+								"data": {
+									"region": "${platform.data.region}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket", "namespace": "xr-ns"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"app": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "app", "namespace": "xr-ns"},
+									"data": {"region": "us-west-2"}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+					RequiredResources: map[string]*fnv1.Resources{
+						"platform": {},
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+						Resources: map[string]*fnv1.ResourceSelector{
+							"platform": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+								Match:      &fnv1.ResourceSelector_MatchName{MatchName: "platform-config"},
+								Namespace:  new("xr-ns"),
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `resource "app" already exists but cannot be rendered, refusing to delete it: node "app": eval "platform.data.region" at "data.region": eval "platform.data.region": no such attribute(s): platform (data pending)`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
+		"ExistingDependentWaitsForExternalCollectionFetch": {
+			reason: "A resource that already exists and reads an external collection Crossplane hasn't fetched yet should not fail the run, so Crossplane can fetch the collection and call the function again",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "configs",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"selector": {
+										"matchLabels": {
+											"app": "${schema.metadata.name}"
+										}
+									}
+								}
+							}
+						}, {
+							"id": "app",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {"name": "app"},
+								"data": {
+									"region": "${configs[0].data.region}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket", "namespace": "xr-ns"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"app": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "app", "namespace": "xr-ns"},
+									"data": {"region": "us-west-2"}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+						Resources: map[string]*fnv1.ResourceSelector{
+							"configs": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+								Match: &fnv1.ResourceSelector_MatchLabels{
+									MatchLabels: &fnv1.MatchLabels{
+										Labels: map[string]string{"app": "test-bucket"},
+									},
+								},
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
 						},
 					},
 				},
@@ -1963,6 +3204,125 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
+		"CollectionPartiallyObservedNotReady": {
+			reason: "A collection with readyWhen should not be ready until every item it renders has been observed",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"forEach": [{"region": "${schema.spec.regions}"}],
+							"readyWhen": ["${each.status.atProvider.id != ''}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {
+									"name": "${schema.metadata.name + '-' + region}"
+								},
+								"spec": {
+									"forProvider": {
+										"region": "${region}"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {
+									"regions": ["us-east-1", "us-west-2"]
+								}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							// us-east-1 exists and would be ready on its own, but us-west-2 doesn't exist yet
+							"bucket-test-bucket-us-east-1": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {
+										"name": "test-bucket-us-east-1",
+										"labels": {"kro.run/collection-index": "0"}
+									},
+									"spec": {"forProvider": {"region": "us-east-1"}},
+									"status": {"atProvider": {"id": "test-bucket-us-east-1"}}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket-test-bucket-us-east-1": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {
+										"name": "test-bucket-us-east-1",
+										"labels": {"kro.run/collection-index": "0"}
+									},
+									"spec": {
+										"forProvider": {
+											"region": "us-east-1"
+										}
+									}
+								}`),
+								Ready: fnv1.Ready_READY_FALSE,
+							},
+							"bucket-test-bucket-us-west-2": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {
+										"name": "test-bucket-us-west-2",
+										"labels": {"kro.run/collection-index": "1"}
+									},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+								Ready: fnv1.Ready_READY_FALSE,
+							},
+						},
+					},
+				},
+			},
+		},
 		"MultiResourceDependencyChain": {
 			reason: "Resource B (BucketLogging) should resolve CEL expressions that reference resource A (Bucket) outputs",
 			args: args{
@@ -2084,6 +3444,136 @@ func TestRunFunction(t *testing.T) {
 									}
 								}`),
 							},
+						},
+					},
+				},
+			},
+		},
+		"DependentUsesRenderedFieldsInSamePass": {
+			reason: "A resource should be composed in the same pass from fields its dependency's template sets, but wait for fields only the observed dependency has",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {
+									"name": "${schema.spec.bucketName}"
+								},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}, {
+							"id": "logging",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "BucketLogging",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"bucket": "${bucket.metadata.name}",
+										"targetPrefix": "logs/"
+									}
+								}
+							}
+						}, {
+							"id": "cm",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {},
+								"data": {
+									"arn": "${bucket.status.atProvider.arn}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {"bucketName": "my-bucket"}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket":        schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket":        schemaBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": schemaBucketLogging,
+						"/v1, Kind=ConfigMap":                           schemaConfigMap,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=BucketLogging": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "BucketLogging",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {
+										"name": "my-bucket"
+									},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+							// logging reads the name bucket's template sets, before bucket exists
+							"logging": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "BucketLogging",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"bucket": "my-bucket",
+											"targetPrefix": "logs/"
+										}
+									}
+								}`),
+							},
+							// cm isn't composed, because bucket.status only exists once bucket is observed
 						},
 					},
 				},
@@ -2348,11 +3838,745 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
+		"ExistingResourceNotRenderable": {
+			reason: "A resource that already exists but can no longer be rendered should return a fatal result, rather than being left out of desired state and deleted by Crossplane",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}, {
+							"id": "cm",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {},
+								"data": {
+									"arn": "${bucket.status.atProvider.arn}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							// bucket no longer has the arn that cm needs, but cm already exists
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-abc123"},
+									"spec": {"forProvider": {"region": "us-west-2"}}
+								}`),
+							},
+							"cm": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "v1",
+									"kind": "ConfigMap",
+									"metadata": {"name": "test-bucket-cm-xyz"},
+									"data": {"arn": "arn:aws:s3:::test-bucket-abc123"}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `resource "cm" already exists but cannot be rendered, refusing to delete it: node "cm": eval "bucket.status.atProvider.arn" at "data.arn": eval "bucket.status.atProvider.arn": no such key: status (data pending)`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
+		"CELInKindUnsupported": {
+			reason: "A template whose kind is a CEL expression should return a fatal result, since resolving it needs the API server's REST mapper",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "cm",
+							"template": {
+								"apiVersion": "v1",
+								"kind": "${'Config' + 'Map'}",
+								"metadata": {},
+								"data": {
+									"key": "value"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							// Schemas are requested before the graph is compiled, so
+							// the unrendered kind is asked for too
+							"/v1, Kind=${'Config' + 'Map'}": {
+								ApiVersion: "v1",
+								Kind:       "${'Config' + 'Map'}",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `resource "cm": CEL expressions in apiVersion or kind are not supported`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
+		"CELInExternalRefKindUnsupported": {
+			reason: "An external ref whose kind is a CEL expression should return a fatal result, since resolving it needs the API server's REST mapper",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "config",
+							"externalRef": {
+								"apiVersion": "v1",
+								"kind": "${'Config' + 'Map'}",
+								"metadata": {
+									"name": "my-platform-config"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							// Schemas are requested before the graph is compiled, so
+							// the unrendered kind is asked for too
+							"/v1, Kind=${'Config' + 'Map'}": {
+								ApiVersion: "v1",
+								Kind:       "${'Config' + 'Map'}",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `resource "config": CEL expressions in apiVersion or kind are not supported`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
+		"TypeMismatch": {
+			reason: "A CEL expression whose type doesn't match the field it writes should return a fatal result",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"replicas": "${schema.spec.bucketName}"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {"bucketName": "my-bucket"}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `cannot create graph runtime: rgdadapter: compile: compile node "bucket": type mismatch in node "bucket" at path "spec.forProvider.replicas": expression "schema.spec.bucketName" returns "string" but expected "int": type kind mismatch: got "string", expected "int"`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
+		"DuplicateResourceID": {
+			reason: "Two resources with the same ID should return a fatal result",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}, {
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-east-1"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `cannot create graph runtime: rgdadapter: compile: invalid graph: duplicate node id "bucket"`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
+		"TooManyForEachDimensions": {
+			reason: "A forEach with more dimensions than --rgd-max-collection-dim-size allows should return a fatal result",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "buckets",
+							"forEach": [
+								{"a": "${schema.spec.regions}"}, {"b": "${schema.spec.regions}"}, {"c": "${schema.spec.regions}"},
+								{"d": "${schema.spec.regions}"}, {"e": "${schema.spec.regions}"}, {"f": "${schema.spec.regions}"},
+								{"g": "${schema.spec.regions}"}, {"h": "${schema.spec.regions}"}, {"i": "${schema.spec.regions}"},
+								{"j": "${schema.spec.regions}"}, {"k": "${schema.spec.regions}"}
+							],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "${a}"
+									}
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {"regions": ["us-west-2"]}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `resource "buckets": forEach cannot have more than 10 dimensions, got 11`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
+		"StatusConditionsSetOnXR": {
+			reason: "Custom status conditions should be set on the XR, and runtime.condition(schema, ...) should read our approximation of KRO's built-in conditions",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"readyWhen": ["${bucket.status.?atProvider.?id.hasValue()}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"bucketName": "${bucket.status.atProvider.id}",
+							"conditions": [
+								"${runtime.newCondition({type: 'BucketCreated', status: 'True', reason: 'HasID', message: 'bucket ' + bucket.status.atProvider.id + ' exists'})}",
+								"${runtime.newCondition({type: 'AllResourcesReady', status: runtime.condition(schema, 'ResourcesReady').status, reason: 'Checked', message: ''})}"
+							]
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {"name": "test-bucket-abc123"},
+									"spec": {"forProvider": {"region": "us-west-2"}},
+									"status": {"atProvider": {"id": "test-bucket-abc123"}}
+								}`),
+							},
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							// Conditions are returned separately, never in the desired XR's status
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"status": {
+									"bucketName": "test-bucket-abc123"
+								}
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Ready: fnv1.Ready_READY_TRUE,
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+					Conditions: []*fnv1.Condition{
+						{
+							Type:    "BucketCreated",
+							Status:  fnv1.Status_STATUS_CONDITION_TRUE,
+							Reason:  "HasID",
+							Message: new("bucket test-bucket-abc123 exists"),
+							Target:  fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+						{
+							// Every resource is ready this run
+							Type:   "AllResourcesReady",
+							Status: fnv1.Status_STATUS_CONDITION_TRUE,
+							Reason: "Checked",
+							Target: fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+					},
+				},
+			},
+		},
+		"StatusConditionWaitingForDataLeftOut": {
+			reason: "A custom status condition whose data isn't available yet should be left out, so Crossplane keeps its last value on the XR",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"readyWhen": ["${bucket.status.?atProvider.?id.hasValue()}"],
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"conditions": [
+								"${runtime.newCondition({type: 'BucketCreated', status: 'True', reason: 'HasID', message: 'bucket ' + bucket.status.atProvider.id + ' exists'})}",
+								"${runtime.newCondition({type: 'AllResourcesReady', status: runtime.condition(schema, 'ResourcesReady').status, reason: 'Checked', message: ''})}"
+							]
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Ready: fnv1.Ready_READY_FALSE,
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+					// BucketCreated is left out, because bucket.status doesn't exist yet
+					Conditions: []*fnv1.Condition{
+						{
+							// bucket isn't ready yet
+							Type:   "AllResourcesReady",
+							Status: fnv1.Status_STATUS_CONDITION_FALSE,
+							Reason: "Checked",
+							Target: fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+					},
+				},
+			},
+		},
+		"StatusConditionWarnings": {
+			reason: "A custom status condition that fails to evaluate (here, one with no type), or uses a condition type Crossplane reserves, should be left out with a warning, while the rest are still set",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "bucket",
+							"template": {
+								"apiVersion": "s3.aws.upbound.io/v1beta1",
+								"kind": "Bucket",
+								"metadata": {},
+								"spec": {
+									"forProvider": {
+										"region": "us-west-2"
+									}
+								}
+							}
+						}],
+						"status": {
+							"conditions": [
+								"${runtime.newCondition({status: 'True', reason: 'Checked', message: ''})}",
+								"${runtime.newCondition({type: 'Ready', status: 'True', reason: 'Checked', message: ''})}",
+								"${runtime.newCondition({type: 'Configured', status: 'True', reason: 'Checked', message: ''})}"
+							]
+						}
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"s3.aws.upbound.io/v1beta1, Kind=Bucket": schemaBucket,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"s3.aws.upbound.io/v1beta1, Kind=Bucket": {
+								ApiVersion: "s3.aws.upbound.io/v1beta1",
+								Kind:       "Bucket",
+							},
+						},
+					},
+					Desired: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket"
+							}`),
+						},
+						Resources: map[string]*fnv1.Resource{
+							"bucket": {
+								Resource: resource.MustStructJSON(`{
+									"apiVersion": "s3.aws.upbound.io/v1beta1",
+									"kind": "Bucket",
+									"metadata": {},
+									"spec": {
+										"forProvider": {
+											"region": "us-west-2"
+										}
+									}
+								}`),
+							},
+						},
+					},
+					Results: []*fnv1.Result{
+						{
+							Severity: fnv1.Severity_SEVERITY_WARNING,
+							Message:  "cannot evaluate status conditions: author condition evaluation degraded: \"${runtime.newCondition({status: 'True', reason: 'Checked', message: ''})}\": parse \"runtime.newCondition({status: 'True', reason: 'Checked', message: ''})\": ERROR: <input>:1:22: runtime.newCondition: 'type' is required\n | runtime.newCondition({status: 'True', reason: 'Checked', message: ''})\n | .....................^",
+							Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+						{
+							Severity: fnv1.Severity_SEVERITY_WARNING,
+							Message:  `cannot set condition "Ready": Crossplane reserves this condition type`,
+							Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+					},
+					Conditions: []*fnv1.Condition{
+						{
+							Type:   "Configured",
+							Status: fnv1.Status_STATUS_CONDITION_TRUE,
+							Reason: "Checked",
+							Target: fnv1.Target_TARGET_COMPOSITE.Enum(),
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			f := NewFunction(logging.NewNopLogger(), graph.RGDConfig{
+			f := NewFunction(logging.NewNopLogger(), graph.Config{
 				MaxCollectionSize:          1000,
 				MaxCollectionDimensionSize: 10,
 			})
@@ -2370,7 +4594,7 @@ func TestRunFunction(t *testing.T) {
 }
 
 func TestRunFunctionCollectionSizeLimitExceeded(t *testing.T) {
-	f := NewFunction(logging.NewNopLogger(), graph.RGDConfig{
+	f := NewFunction(logging.NewNopLogger(), graph.Config{
 		MaxCollectionSize:          2,
 		MaxCollectionDimensionSize: 10,
 	})
@@ -2434,7 +4658,7 @@ func TestRunFunctionCollectionSizeLimitExceeded(t *testing.T) {
 		Results: []*fnv1.Result{{
 			Severity: fnv1.Severity_SEVERITY_FATAL,
 			Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
-			Message:  `cannot get desired state for resource "bucket": collection size of 3 is over the maximum collection size of 2`,
+			Message:  `apply "bucket": resolve: node "bucket": collection size 3 exceeds the maximum of 2`,
 		}},
 	}
 
@@ -2456,7 +4680,7 @@ func TestRunFunctionOmitRemovesField(t *testing.T) {
 		_ = features.FeatureGate.Set("CELOmitFunction=false")
 	})
 
-	f := NewFunction(logging.NewNopLogger(), graph.RGDConfig{
+	f := NewFunction(logging.NewNopLogger(), graph.Config{
 		MaxCollectionSize:          1000,
 		MaxCollectionDimensionSize: 10,
 	})
