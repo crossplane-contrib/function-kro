@@ -3,7 +3,7 @@ module github.com/crossplane-contrib/function-kro
 go 1.27.0
 
 require (
-	github.com/alecthomas/kong v1.16.0
+	github.com/alecthomas/kong v1.17.0
 	github.com/crossplane/crossplane-runtime/v2 v2.5.0
 	github.com/crossplane/crossplane/apis/v2 v2.5.0
 	github.com/crossplane/function-sdk-go v0.7.1
