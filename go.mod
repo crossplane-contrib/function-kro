@@ -12,11 +12,11 @@ require (
 	github.com/kubernetes-sigs/kro v0.10.0
 	golang.org/x/sync v0.25.0
 	google.golang.org/protobuf v1.36.12
-	k8s.io/api v0.37.2
-	k8s.io/apiextensions-apiserver v0.37.2
-	k8s.io/apimachinery v0.37.2
-	k8s.io/apiserver v0.37.2
-	k8s.io/client-go v0.37.2
+	k8s.io/api v0.37.3
+	k8s.io/apiextensions-apiserver v0.37.3
+	k8s.io/apimachinery v0.37.3
+	k8s.io/apiserver v0.37.3
+	k8s.io/client-go v0.37.3
 	k8s.io/kube-openapi v0.0.0-20260821135717-be32def86098
 	sigs.k8s.io/controller-runtime v0.25.2
 	sigs.k8s.io/controller-tools v0.23.0
@@ -98,8 +98,8 @@ require (
 	google.golang.org/grpc v1.84.0 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	k8s.io/code-generator v0.37.2 // indirect
-	k8s.io/component-base v0.37.2 // indirect
+	k8s.io/code-generator v0.37.3 // indirect
+	k8s.io/component-base v0.37.3 // indirect
 	k8s.io/gengo/v2 v2.0.0-20260408192533-25e2208e0dc3 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab // indirect
