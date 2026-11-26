@@ -4253,6 +4253,69 @@ func TestRunFunction(t *testing.T) {
 				},
 			},
 		},
+		"CollectionItemsWithSameNameInDifferentNamespaces": {
+			reason: "Collection items with the same metadata.name in different namespaces would share a composed resource name, so the function should return a fatal result rather than silently dropping all but one",
+			args: args{
+				req: &fnv1.RunFunctionRequest{
+					Meta: &fnv1.RequestMeta{Tag: "test", Capabilities: []fnv1.Capability{fnv1.Capability_CAPABILITY_CAPABILITIES, fnv1.Capability_CAPABILITY_REQUIRED_SCHEMAS}},
+					Input: resource.MustStructJSON(`{
+						"apiVersion": "kro.fn.crossplane.io/v1alpha1",
+						"kind": "ResourceGraph",
+						"resources": [{
+							"id": "configs",
+							"forEach": [{"ns": "${schema.spec.regions}"}],
+							"template": {
+								"apiVersion": "v1",
+								"kind": "ConfigMap",
+								"metadata": {
+									"name": "app-config",
+									"namespace": "${ns}"
+								},
+								"data": {
+									"team": "${ns}"
+								}
+							}
+						}]
+					}`),
+					Observed: &fnv1.State{
+						Composite: &fnv1.Resource{
+							Resource: resource.MustStructJSON(`{
+								"apiVersion": "example.crossplane.io/v1",
+								"kind": "XBucket",
+								"metadata": {"name": "test-bucket"},
+								"spec": {"regions": ["team-a", "team-b"]}
+							}`),
+						},
+					},
+					RequiredSchemas: map[string]*fnv1.Schema{
+						"example.crossplane.io/v1, Kind=XBucket": schemaXBucket,
+						"/v1, Kind=ConfigMap":                    schemaConfigMap,
+					},
+				},
+			},
+			want: want{
+				rsp: &fnv1.RunFunctionResponse{
+					Meta: &fnv1.ResponseMeta{Tag: "test", Ttl: durationpb.New(response.DefaultTTL)},
+					Requirements: &fnv1.Requirements{
+						Schemas: map[string]*fnv1.SchemaSelector{
+							"example.crossplane.io/v1, Kind=XBucket": {
+								ApiVersion: "example.crossplane.io/v1",
+								Kind:       "XBucket",
+							},
+							"/v1, Kind=ConfigMap": {
+								ApiVersion: "v1",
+								Kind:       "ConfigMap",
+							},
+						},
+					},
+					Results: []*fnv1.Result{{
+						Severity: fnv1.Severity_SEVERITY_FATAL,
+						Message:  `apply "configs": resource "configs": collection items v1/ConfigMap/team-a/app-config and v1/ConfigMap/team-b/app-config would both be composed as "configs-app-config"; give each item a unique metadata.name`,
+						Target:   fnv1.Target_TARGET_COMPOSITE.Enum(),
+					}},
+				},
+			},
+		},
 		"StatusConditionsSetOnXR": {
 			reason: "Custom status conditions should be set on the XR, and runtime.condition(schema, ...) should read our approximation of KRO's built-in conditions",
 			args: args{

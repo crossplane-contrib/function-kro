@@ -195,6 +195,9 @@ func (s *Simple) emitTemplate(rt *runtime.Runtime, n *runtime.Node, desired []*u
 	c := s.Crossplane
 	id := n.ID()
 	names := make([]resource.Name, 0, len(desired))
+	// byName records which object each collection item's composed resource
+	// name was given to, so two items can't share one.
+	byName := make(map[resource.Name]string, len(desired))
 	for i, obj := range desired {
 		_, namespaced, err := s.mappingFor(n, obj)
 		if err != nil {
@@ -237,6 +240,16 @@ func (s *Simple) emitTemplate(rt *runtime.Runtime, n *runtime.Node, desired []*u
 		name := resource.Name(id)
 		if n.IsCollection() {
 			name = resource.Name(id + "-" + obj.GetName())
+			// The name leaves out the namespace, so items with the same
+			// metadata.name in different namespaces would get the same
+			// composed resource name, and all but the last would be silently
+			// dropped. Adding the namespace would rename, and so recreate, the
+			// composed resources of existing collections, so we return an
+			// error instead.
+			if other, ok := byName[name]; ok {
+				return nil, fmt.Errorf("resource %q: collection items %s and %s would both be composed as %q; give each item a unique metadata.name", id, other, identityKey(obj), name)
+			}
+			byName[name] = identityKey(obj)
 		}
 		c.Desired[name] = &resource.DesiredComposed{Resource: cd}
 		names = append(names, name)
