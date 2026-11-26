@@ -47,8 +47,6 @@ Upstream kro rejects two namespace mistakes that function-kro lets through:
 - A template that sets a namespace on a cluster-scoped kind, like a ClusterRole. function-kro infers scope from the templates, so it treats that kind as namespaced. Under a cluster-scoped XR, the API server ignores the namespace and creates the resource. Under a namespaced XR, Crossplane rejects any cluster-scoped kind anyway.
 - A template under a cluster-scoped XR that leaves the namespace off a namespaced kind, like a ConfigMap. Crossplane can't apply it and reports an error on the XR.
 
-Under a namespaced XR, a named external ref to a cluster-scoped kind gets the XR's namespace, so Crossplane never finds it. An external ref that uses a label selector works.
-
 ## Conditions
 
 ### Authors can't set Crossplane's condition types
